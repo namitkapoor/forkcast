@@ -1,7 +1,7 @@
 import type { EditScreenRequest, EditScreenResponse, TokenUsage } from "../../src/lib/api.js";
 import { A2UI_VERSION, BASIC_CATALOG_ID, type A2uiMessage, type Screen } from "../../src/a2ui/types.js";
 import { catalogPromptSummary, validateMessages } from "../../src/a2ui/validate.js";
-import { callJson, HttpError, TimeoutError, type InlineMediaPart } from "./gemini.js";
+import { callJson, CARBON_TIMEOUT_MS, HttpError, isCarbonModel, TimeoutError, type InlineMediaPart } from "./gemini.js";
 import { getAt, getComponents, getDataModel, lintBindings, pinSurfaceId, screenToText } from "./dataModel.js";
 import { models, taskConfigs } from "./models.js";
 
@@ -120,16 +120,19 @@ export async function editScreen(req: EditScreenRequest, budgetMs = 55_000): Pro
   }
 
   const t0 = Date.now();
-  const remaining = () => budgetMs - (Date.now() - t0);
+  const useCorePolicy = inlineMedia.length > 0 || annotations.length >= 2;
+  const primaryTask = useCorePolicy ? taskConfigs.editCore : taskConfigs.editSmall;
+  const effectiveBudgetMs =
+    isCarbonModel(primaryTask.model) || isCarbonModel(models.generatorFallback)
+      ? Math.max(budgetMs, CARBON_TIMEOUT_MS + 35_000)
+      : budgetMs;
+  const remaining = () => effectiveBudgetMs - (Date.now() - t0);
   const surfaceId = surfaceIdOf(screen);
   const before = screen.messages;
   const combinedInstructionText = [instruction, ...annotations.map((a) => a.text)].join(". ");
   const allowValues = ASKS_FOR_VALUES.test(combinedInstructionText);
   const comps = new Map(getComponents(before).map((c) => [String(c.id), c]));
   const targets = ids.map((id) => comps.get(id)).filter(Boolean);
-
-  const useCorePolicy = inlineMedia.length > 0 || annotations.length >= 2;
-  const primaryTask = useCorePolicy ? taskConfigs.editCore : taskConfigs.editSmall;
 
   const system = SYSTEM();
   const prompt = [
@@ -174,7 +177,8 @@ export async function editScreen(req: EditScreenRequest, budgetMs = 55_000): Pro
   let first: { data: ModelEdit; model: string; raw: string } | undefined;
   const candidates = [primaryTask.model, ...(models.generatorFallback !== primaryTask.model ? [models.generatorFallback] : [])];
   for (const model of candidates) {
-    const timeoutMs = Math.min(model === primaryTask.model ? 36_000 : remaining() - 2000, remaining() - 2000);
+    const modelCap = isCarbonModel(model) ? CARBON_TIMEOUT_MS : model === primaryTask.model ? 36_000 : remaining() - 2000;
+    const timeoutMs = Math.min(modelCap, remaining() - 2000);
     if (timeoutMs < 4000) break;
     try {
       const r = await callJson<ModelEdit>({

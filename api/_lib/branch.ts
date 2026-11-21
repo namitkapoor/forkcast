@@ -1,6 +1,6 @@
 import type { BranchRequest, BranchResponse } from "../../src/lib/api.js";
 import type { StateNode, Transition, TransitionKind } from "../../src/graph/types.js";
-import { callJson, HttpError } from "./gemini.js";
+import { callJson, CARBON_TIMEOUT_MS, HttpError, isCarbonModel } from "./gemini.js";
 import { getDataModel, screenToText } from "./dataModel.js";
 import { generateScreen } from "./screen.js";
 import { models } from "./models.js";
@@ -81,9 +81,13 @@ export async function branch(req: BranchRequest, budgetMs = 55_000): Promise<Bra
     ...(carries.length ? { contract: { carries } } : {}),
   };
 
+  const effectiveBudget =
+    isCarbonModel(models.generator) || isCarbonModel(models.generatorFallback)
+      ? Math.max(budgetMs, CARBON_TIMEOUT_MS + 40_000)
+      : budgetMs;
   const gen = await generateScreen(
     { node, context: fromScreen.context ?? {}, utterance, carry, previous: screenToText(fromScreen.messages) },
-    { budgetMs: budgetMs - (Date.now() - t0) },
+    { budgetMs: effectiveBudget - (Date.now() - t0) },
   );
   return { node, transition, screen: gen.screen, warnings: gen.warnings };
 }

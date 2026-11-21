@@ -1,5 +1,5 @@
 import type { CritiquePin, CritiqueScreenRequest, CritiqueScreenResponse, TokenUsage } from "../../src/lib/api.js";
-import { callJson, HttpError, type JsonCallResult } from "./gemini.js";
+import { callJson, CARBON_TIMEOUT_MS, HttpError, isCarbonModel, type JsonCallResult } from "./gemini.js";
 import { getComponents, screenToText } from "./dataModel.js";
 import { taskConfigs, type ThinkingLevelSetting } from "./models.js";
 
@@ -49,9 +49,9 @@ export async function critiqueScreen(req: CritiqueScreenRequest): Promise<Critiq
     .join("\n\n");
 
   const primary = taskConfigs.uxEval;
-  const isCarbonOrArgon = /carbon|argon/i.test(primary.model);
+  const primaryTimeout = isCarbonModel(primary.model) ? CARBON_TIMEOUT_MS : /argon/i.test(primary.model) ? 95_000 : 35_000;
   const candidates: { model: string; level: ThinkingLevelSetting; timeoutMs: number }[] = [
-    { model: primary.model, level: primary.thinkingLevel ?? "MEDIUM", timeoutMs: isCarbonOrArgon ? 95_000 : 35_000 },
+    { model: primary.model, level: primary.thinkingLevel ?? "MEDIUM", timeoutMs: primaryTimeout },
     { model: "gemini-4-neon", level: "LOW", timeoutMs: 25_000 },
     { model: "gemini-4-hydrogen", level: "LOW", timeoutMs: 20_000 },
   ];

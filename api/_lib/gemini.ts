@@ -23,6 +23,9 @@ export class HttpError extends Error {
 
 export class TimeoutError extends Error {}
 
+export const CARBON_TIMEOUT_MS = 200_000;
+export const isCarbonModel = (model: string): boolean => /carbon/i.test(model);
+
 export interface InlineMediaPart {
   mimeType: string;
   data: string;
@@ -88,7 +91,8 @@ export function parseJsonLoose(text: string): unknown {
 }
 
 async function once(opts: JsonCallOptions): Promise<{ text: string; usage: TokenUsageInfo }> {
-  const timeoutMs = opts.timeoutMs ?? 45_000;
+  const baseTimeout = opts.timeoutMs ?? 45_000;
+  const timeoutMs = isCarbonModel(opts.model) ? Math.max(baseTimeout, CARBON_TIMEOUT_MS) : baseTimeout;
   const ctrl = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {

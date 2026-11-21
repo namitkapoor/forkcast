@@ -3,7 +3,7 @@ import { jsonRoute } from "./_lib/http.js";
 import { HttpError } from "./_lib/gemini.js";
 import { generateScreen } from "./_lib/screen.js";
 
-export const config = { maxDuration: 60 };
+export const config = { maxDuration: 240 };
 
 export default jsonRoute<GenerateScreenRequest>(async (body) => {
   if (!body.node || typeof body.node !== "object") throw new HttpError(400, "node is required");

@@ -1,7 +1,7 @@
 import { A2UI_VERSION, BASIC_CATALOG_ID, type A2uiMessage, type Screen } from "../../src/a2ui/types.js";
 import { catalogPromptSummary, validateMessages } from "../../src/a2ui/validate.js";
 import type { Context, StateNode } from "../../src/graph/types.js";
-import { callJson, HttpError, TimeoutError } from "./gemini.js";
+import { callJson, CARBON_TIMEOUT_MS, HttpError, isCarbonModel, TimeoutError } from "./gemini.js";
 import { getDataModel, lintBindings, pinSurfaceId } from "./dataModel.js";
 import { models } from "./models.js";
 
@@ -99,7 +99,9 @@ export async function generateScreen(input: ScreenInput, opts: GenerateOptions =
   if (!input?.node?.id || !input.node.stage) throw new HttpError(400, "node with id and stage is required");
   const id = opts.id ?? `${input.node.id}-${slug()}`;
   const carry = input.carry ?? {};
-  const deadline = Date.now() + (opts.budgetMs ?? 55_000);
+  const usesCarbon = isCarbonModel(models.generator) || isCarbonModel(models.generatorFallback);
+  const defaultBudget = usesCarbon ? CARBON_TIMEOUT_MS + 35_000 : 55_000;
+  const deadline = Date.now() + Math.max(opts.budgetMs ?? defaultBudget, usesCarbon ? CARBON_TIMEOUT_MS + 20_000 : 0);
   const remaining = () => deadline - Date.now();
   const attempts: GenerateResult["attempts"] = [];
   const system = SYSTEM();
@@ -108,7 +110,8 @@ export async function generateScreen(input: ScreenInput, opts: GenerateOptions =
   // 1. Primary model, falling back once on error or timeout.
   let first: { data: ModelScreen; model: string; raw: string } | undefined;
   for (const model of [models.generator, models.generatorFallback]) {
-    const timeoutMs = Math.min(model === models.generator ? (opts.primaryTimeoutMs ?? 30_000) : remaining(), remaining());
+    const primaryCap = isCarbonModel(model) ? CARBON_TIMEOUT_MS : (opts.primaryTimeoutMs ?? 30_000);
+    const timeoutMs = Math.min(model === models.generator ? primaryCap : isCarbonModel(model) ? CARBON_TIMEOUT_MS : remaining(), remaining());
     if (timeoutMs < 3000) break;
     try {
       const r = await callJson<ModelScreen>({ model, system, prompt, temperature: 0.8, timeoutMs, retries: 3 });
