@@ -1,7 +1,7 @@
 import type { CritiquePin, CritiqueScreenRequest, CritiqueScreenResponse, TokenUsage } from "../../src/lib/api.js";
 import { callJson, HttpError, type JsonCallResult } from "./gemini.js";
 import { getComponents, screenToText } from "./dataModel.js";
-import { models, taskConfigs, type ThinkingLevelSetting } from "./models.js";
+import { taskConfigs, type ThinkingLevelSetting } from "./models.js";
 
 const SYSTEM = `You are a Principal UX & QA Evaluator for Forkcast, reviewing a generated flight-booking A2UI screen.
 Evaluate the screen across 4 dimensions (0 to 100 each): usability, hierarchy, accessibility, continuity (how well it carries context and satisfies transition contracts).
@@ -49,10 +49,11 @@ export async function critiqueScreen(req: CritiqueScreenRequest): Promise<Critiq
     .join("\n\n");
 
   const primary = taskConfigs.uxEval;
+  const isCarbonOrArgon = /carbon|argon/i.test(primary.model);
   const candidates: { model: string; level: ThinkingLevelSetting; timeoutMs: number }[] = [
-    { model: primary.model, level: primary.thinkingLevel ?? "MEDIUM", timeoutMs: 26_000 },
+    { model: primary.model, level: primary.thinkingLevel ?? "MEDIUM", timeoutMs: isCarbonOrArgon ? 95_000 : 35_000 },
+    { model: "gemini-4-neon", level: "LOW", timeoutMs: 25_000 },
     { model: "gemini-4-hydrogen", level: "LOW", timeoutMs: 20_000 },
-    ...(models.uxEvalDeep !== primary.model ? [{ model: models.uxEvalDeep, level: "LOW" as const, timeoutMs: 32_000 }] : []),
   ];
 
   // Deduplicate identical model+level pairs

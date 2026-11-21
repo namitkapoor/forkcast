@@ -118,11 +118,10 @@ export const taskConfigs = {
     };
   },
   get uxEval(): TaskModelConfig {
-    // Interactive UI critique uses Neon (LOW) by default so responses return in ~4-7s instead of timing out on Carbon HIGH.
-    const model = firstEnv("FORKCAST_MODEL_JUDGE") ?? "gemini-4-neon";
+    const model = firstEnv("FORKCAST_MODEL_UX_EVAL", "GEMINI_UX_EVAL_CORE_MODEL", "FORKCAST_MODEL_JUDGE") ?? "gemini-4-carbon";
     return {
       model,
-      thinkingLevel: parseLevel(firstEnv("FORKCAST_THINKING_UX_EVAL"), "LOW"),
+      thinkingLevel: parseLevel(firstEnv("FORKCAST_THINKING_UX_EVAL", "GEMINI_UX_EVAL_CORE_THINKING_LEVEL"), "MEDIUM"),
     };
   },
   get transcribe(): TaskModelConfig {
