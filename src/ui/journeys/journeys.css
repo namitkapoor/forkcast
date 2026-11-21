@@ -155,7 +155,7 @@
 .device:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .device__status { flex: none; height: 30px; padding: 0 22px; display: flex; align-items: center; justify-content: space-between; background: #fff; border-radius: 30px 30px 0 0; font: 600 12.5px/1 -apple-system, system-ui, sans-serif; color: #14161a; }
 .device__status-icons { display: flex; align-items: center; gap: 6px; }
-.device--desktop { border-radius: 14px; padding: 0; background: #e8e9ec; max-width: 560px; }
+.device--desktop { border-radius: 14px; padding: 0; background: #e8e9ec; max-width: 520px; }
 .device__window { flex: none; height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 12px; border-radius: 14px 14px 0 0; background: #e8e9ec; }
 .device__window i { width: 10px; height: 10px; border-radius: 50%; background: #c9cbd0; }
 .device__window i:first-child { background: #ff6159; } .device__window i:nth-child(2) { background: #ffbd2e; } .device__window i:nth-child(3) { background: #28c941; }

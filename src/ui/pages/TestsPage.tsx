@@ -1,5 +1,9 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { edgeKey, type Context, type Trace } from "../../graph/types";
+import { edgeKey, type Context } from "../../graph/types";
+import { INTENTS, type Intent, type JourneysFile, type Persona } from "../../journeys/types";
+import { buildIntentGraph } from "../../journeys/aggregate";
+import { cap, laneName, loadJourneys, loadNaiveJourneys, type HeroMode } from "../journeys/data";
+import { IconDevice, IconPerson } from "../icons";
 import type { Failure } from "../../checks/run";
 import type { TestsPageProps } from "./types";
 import "./testsPage.css";
@@ -22,12 +26,6 @@ interface CheckRow {
   failures: Failure[];
   failingSessions: number;
   status: Status;
-}
-
-function ctxKey(c: Context): string {
-  const rest: Record<string, string> = {};
-  for (const k of Object.keys(c).sort()) if (k !== "route") rest[k] = c[k];
-  return JSON.stringify(rest);
 }
 
 function ctxLabel(c: Context): string {
@@ -133,41 +131,6 @@ export function TestsPage(p: TestsPageProps) {
 
   const failingCount = rows.filter((r) => r.status === "fail").length;
 
-  const matrix = useMemo(() => {
-    const groups = new Map<string, { label: string; traces: Trace[] }>();
-    for (const t of traces) {
-      const k = ctxKey(t.context);
-      const g = groups.get(k);
-      if (g) g.traces.push(t);
-      else groups.set(k, { label: ctxLabel(t.context), traces: [t] });
-    }
-    const failuresByTrace = new Map<string, Failure[]>();
-    for (const f of report.failures) {
-      const arr = failuresByTrace.get(f.traceId);
-      if (arr) arr.push(f);
-      else failuresByTrace.set(f.traceId, [f]);
-    }
-    const nodeOfFailure = (f: Failure) => (f.kind === "invariant" ? f.where : f.where.split("->")[1] ?? f.where);
-
-    return [...groups.entries()]
-      .map(([key, g]) => {
-        const cells = new Map<string, { sessions: number; failures: number }>();
-        for (const n of graph.nodes) cells.set(n.id, { sessions: 0, failures: 0 });
-        for (const t of g.traces) {
-          for (const id of new Set(t.steps.map((s) => s.node))) {
-            const c = cells.get(id);
-            if (c) c.sessions++;
-          }
-          for (const f of failuresByTrace.get(t.id) ?? []) {
-            const c = cells.get(nodeOfFailure(f));
-            if (c) c.failures++;
-          }
-        }
-        return { key, label: g.label, count: g.traces.length, cells };
-      })
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [graph, traces, report]);
-
   return (
     <div className="tp">
       <header className="tp-head">
@@ -197,61 +160,7 @@ export function TestsPage(p: TestsPageProps) {
         </div>
       </header>
 
-      <section className="tp-card">
-        <div className="tp-card-head">
-          <h2 className="tp-h2">By traveler type</h2>
-          <span className="tp-legend">
-            <span className="tp-legend-item">
-              <span className="tp-cell tp-cell--ok tp-cell--sw" /> Passing
-            </span>
-            <span className="tp-legend-item">
-              <span className="tp-cell tp-cell--bad tp-cell--sw" /> Failing
-            </span>
-            <span className="tp-legend-item">
-              <span className="tp-cell tp-cell--none tp-cell--sw" /> Not visited
-            </span>
-          </span>
-        </div>
-        <div className="tp-matrix-wrap">
-          <table className="tp-matrix">
-            <thead>
-              <tr>
-                <th className="tp-mx-corner">Traveler</th>
-                {graph.nodes.map((n) => (
-                  <th key={n.id} className="tp-mx-col" title={n.label}>
-                    <span>{n.label}</span>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {matrix.map((row) => (
-                <tr key={row.key}>
-                  <th className="tp-mx-row" scope="row">
-                    <span className="tp-mx-label">{row.label}</span>
-                    <span className="tp-mx-n">{row.count}</span>
-                  </th>
-                  {graph.nodes.map((n) => {
-                    const c = row.cells.get(n.id)!;
-                    const state = c.failures ? "bad" : c.sessions ? "ok" : "none";
-                    return (
-                      <td key={n.id}>
-                        <button
-                          type="button"
-                          className={`tp-cell tp-cell--${state}`}
-                          title={`${n.label}: ${plural(c.sessions, "session")} · ${plural(c.failures, "failure")}`}
-                          aria-label={`${row.label}, ${n.label}: ${plural(c.sessions, "session")}, ${plural(c.failures, "failure")}`}
-                          onClick={() => onOpenNode(n.id)}
-                        />
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <PersonaMatrix />
 
       <section className="tp-card">
         <div className="tp-card-head">
@@ -370,5 +279,164 @@ export function TestsPage(p: TestsPageProps) {
       </section>
 
     </div>
+  );
+}
+
+const IconCoin = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M14.5 9.2c-.5-.8-1.4-1.2-2.5-1.2-1.5 0-2.5.8-2.5 1.9 0 2.6 5 1.4 5 4.1 0 1.1-1 2-2.5 2-1.2 0-2.1-.5-2.6-1.3M12 6.5V8m0 8v1.5" />
+  </svg>
+);
+const IconPlane = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M2.5 13.5l19-8-6.5 15-3-6.5z" />
+  </svg>
+);
+
+/** "Maya", "Okafor family", "Sam & Priya": short enough for a tooltip sentence. */
+const callName = (p: Persona) => {
+  const n = laneName(p);
+  return /family|&/.test(n) ? n : n.split(" ")[0];
+};
+
+type Cell = { turns: number; misfit: number };
+
+function cellsFor(f: JourneysFile | null): Map<string, Cell> {
+  const out = new Map<string, Cell>();
+  for (const j of f?.journeys ?? []) {
+    for (const t of j.turns) {
+      const k = `${j.personaId}|${t.intent}`;
+      const c = out.get(k) ?? { turns: 0, misfit: 0 };
+      c.turns++;
+      if (t.checks.some((x) => x.kind === "persona" && !x.ok)) c.misfit++;
+      out.set(k, c);
+    }
+  }
+  return out;
+}
+
+/** The three personas × the intents their journeys reached: does each screen fit the person? */
+function PersonaMatrix() {
+  const [files, setFiles] = useState<{ checked: JourneysFile | null; naive: JourneysFile | null } | null>(null);
+  const [mode, setMode] = useState<HeroMode>("checked");
+  useEffect(() => {
+    let live = true;
+    Promise.all([loadJourneys(), loadNaiveJourneys()]).then(([c, n]) => {
+      if (live) setFiles({ checked: c?.file ?? null, naive: n });
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const checked = files?.checked ?? null;
+  const naive = files?.naive ?? null;
+  const shown = mode === "naive" && naive ? naive : checked;
+  const intents = useMemo<Intent[]>(() => {
+    const seen: Intent[] = [];
+    for (const f of [checked, naive]) {
+      if (!f) continue;
+      for (const n of buildIntentGraph(f.journeys, f.personas).nodes) if (!seen.includes(n.intent)) seen.push(n.intent);
+    }
+    const rank = (i: Intent) => ((INTENTS as readonly string[]).indexOf(i) + 1 || 99);
+    return seen.sort((a, b) => rank(a) - rank(b));
+  }, [checked, naive]);
+  const cells = useMemo(() => cellsFor(shown), [shown]);
+
+  return (
+    <section className="tp-card" data-persona-matrix>
+      <div className="tp-card-head">
+        <h2 className="tp-h2">By traveler type</h2>
+        {naive && (
+          <div className="tp-seg" role="tablist" aria-label="Which assistant">
+            <button role="tab" aria-selected={mode === "naive"} className={mode === "naive" ? "is-on" : ""} onClick={() => setMode("naive")}>
+              Generic
+            </button>
+            <button role="tab" aria-selected={mode === "checked"} className={mode === "checked" ? "is-on" : ""} onClick={() => setMode("checked")}>
+              Persona-aware
+            </button>
+          </div>
+        )}
+        <span className="tp-legend">
+          <span className="tp-legend-item">
+            <span className="tp-cell tp-cell--ok tp-cell--sw" /> Every screen fits
+          </span>
+          <span className="tp-legend-item">
+            <span className="tp-cell tp-cell--bad tp-cell--sw" /> Some don’t fit
+          </span>
+          <span className="tp-legend-item">
+            <span className="tp-cell tp-cell--none tp-cell--sw" /> Not visited
+          </span>
+        </span>
+      </div>
+      <p className="tp-caption muted">Empty = no traveler of this type goes here, so no test is needed yet. Red = where to look first.</p>
+      {!shown ? (
+        <p className="tp-empty muted">{files ? "No journeys recorded yet." : "Loading journeys…"}</p>
+      ) : (
+        <div className="tp-matrix-wrap">
+          <table className="tp-matrix tp-matrix--personas">
+            <thead>
+              <tr>
+                <th className="tp-mx-corner">Traveler</th>
+                {intents.map((it) => (
+                  <th key={it} className="tp-mx-icol">
+                    {cap(it)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {shown.personas.map((p) => {
+                const pax = Number(p.context.pax) || 1;
+                const desktop = p.context.surface === "fullscreen";
+                return (
+                  <tr key={p.id} data-persona={p.id}>
+                    <th className="tp-mx-row" scope="row">
+                      <div className="tp-mx-person">
+                      {p.photo ? <img className="tp-avatar" src={p.photo} alt="" width={36} height={36} /> : <span className="tp-avatar" />}
+                      <span className="tp-person">
+                        <span className="tp-person-name">{p.name ?? laneName(p)}</span>
+                        <span className="tp-tags">
+                          <span className="tp-tag" title="Party size">
+                            <IconPerson width={12} height={12} /> {pax} traveler{pax === 1 ? "" : "s"}
+                          </span>
+                          <span className="tp-tag" title="Device">
+                            <IconDevice width={12} height={12} /> {desktop ? "desktop" : "phone"}
+                          </span>
+                          <span className="tp-tag" title="Currency">
+                            <IconCoin /> {p.context.currency}
+                          </span>
+                          <span className="tp-tag" title="Flies from">
+                            <IconPlane /> {p.context.origin}
+                          </span>
+                        </span>
+                      </span>
+                      </div>
+                    </th>
+                    {intents.map((it) => {
+                      const c = cells.get(`${p.id}|${it}`);
+                      const state = !c ? "none" : c.misfit ? "bad" : "ok";
+                      const tip = !c
+                        ? `No ${callName(p)} journey reached ${cap(it)} — no test needed yet`
+                        : c.misfit
+                        ? `${callName(p)} · ${cap(it)}: ${c.misfit} of ${c.turns} screen${c.turns === 1 ? "" : "s"} don’t fit`
+                        : `${callName(p)} · ${cap(it)}: all ${c.turns} screen${c.turns === 1 ? "" : "s"} fit`;
+                      return (
+                        <td key={it}>
+                          <span className={`tp-cell tp-cell--${state} tp-cell--wide`} title={tip} aria-label={tip} role="img" tabIndex={0}>
+                            {c?.misfit ? c.misfit : null}
+                          </span>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
