@@ -1,0 +1,162 @@
+# Forkcast LLM Configuration (git-tracked, shared across the team)
+#
+# Secrets (GEMINI_API_KEY) live in `.env` (gitignored).
+# Every LLM call in Forkcast sources its model, reasoning (thinkingConfig),
+# temperature, timeout, and retry settings from this file.
+#
+# Reasoning options (mapped to @google/genai `thinkingConfig`):
+#   enabled:         true | false
+#   thinkingLevel:   MINIMAL | LOW | MEDIUM | HIGH   (recommended for Gemini 3 / 4 models)
+#   thinkingBudget:  integer token budget (0 = disabled, -1 = automatic; optional)
+#   includeThoughts: true | false
+
+llm:
+  generator:
+    description: "Generates full A2UI screens from scratch (and repairs invalid screens)."
+    model: gemini-4-hydrogen
+    reasoning:
+      enabled: true
+      thinkingLevel: LOW
+      includeThoughts: false
+    temperature: 0.8
+    repairTemperature: 0.3
+    timeoutMs: 30000
+    retries: 3
+
+  generatorFallback:
+    description: "Fallback model when generator or editor errors or times out."
+    model: gemini-4-argon
+    reasoning:
+      enabled: true
+      thinkingLevel: LOW
+      includeThoughts: false
+    temperature: 0.8
+    repairTemperature: 0.3
+    timeoutMs: 45000
+    retries: 2
+
+  editor:
+    description: "Edits an existing A2UI screen from a chat or voice instruction."
+    model: gemini-4-hydrogen
+    reasoning:
+      enabled: true
+      thinkingLevel: MEDIUM
+      includeThoughts: false
+    temperature: 0.3
+    repairTemperature: 0.2
+    timeoutMs: 34000
+    retries: 2
+
+  assistant:
+    description: "Short Q&A answers about the run, checks, and coverage in the chat panel."
+    model: gemini-3.5-flash-lite
+    reasoning:
+      enabled: true
+      thinkingLevel: MINIMAL
+      includeThoughts: false
+    temperature: 0.3
+    timeoutMs: 20000
+    retries: 2
+
+  branchPlanner:
+    description: "Plans the new graph node and carried props for /api/branch 'What if' prompts."
+    model: gemini-3.5-flash-lite
+    reasoning:
+      enabled: true
+      thinkingLevel: LOW
+      includeThoughts: false
+    temperature: 0.4
+    timeoutMs: 15000
+    retries: 2
+
+  simulator:
+    description: "Role-plays simulated user persona steps in flow and journey simulations."
+    model: gemini-3.5-flash-lite
+    reasoning:
+      enabled: true
+      thinkingLevel: MINIMAL
+      includeThoughts: false
+    temperature: 0.9
+    timeoutMs: 20000
+    retries: 4
+
+  journeyAssistant:
+    description: "Labels user intent and decides search/tool arguments during journey turns."
+    model: gemini-3.5-flash-lite
+    reasoning:
+      enabled: true
+      thinkingLevel: LOW
+      includeThoughts: false
+    temperature: 0.2
+    timeoutMs: 30000
+    retries: 6
+
+  pinFill:
+    description: "Pinned mode: refills a pinned screen's data model from fresh tool results."
+    model: gemini-3.5-flash-lite
+    reasoning:
+      enabled: true
+      thinkingLevel: MINIMAL
+      includeThoughts: false
+    temperature: 0.4
+    repairTemperature: 0.2
+    timeoutMs: 45000
+    retries: 5
+
+  judge:
+    description: "Evaluates persona contracts against generated screens (scripts/judge-personas.ts)."
+    model: gemini-4-neon
+    reasoning:
+      enabled: true
+      thinkingLevel: HIGH
+      includeThoughts: false
+    temperature: 0
+    timeoutMs: 60000
+    retries: 3
+
+  judgeFallback:
+    description: "Fallback persona contract judge when the primary judge model is unavailable."
+    model: gemini-4-argon
+    reasoning:
+      enabled: true
+      thinkingLevel: MEDIUM
+      includeThoughts: false
+    temperature: 0
+    timeoutMs: 60000
+    retries: 3
+
+  personaImage:
+    description: "Generates fictional persona portrait avatars (scripts/gen-personas.ts)."
+    model: gemini-3.1-flash-image
+    reasoning:
+      enabled: false
+    timeoutMs: 60000
+    retries: 2
+
+  personaImageFallback:
+    description: "Fallback image generation model for persona portraits."
+    model: gemini-2.5-flash-image
+    reasoning:
+      enabled: false
+    timeoutMs: 60000
+    retries: 2
+
+  transcribe:
+    description: "Voice-first audio transcription via Google AI Studio (/api/transcribe)."
+    model: gemini-3.5-transcribe
+    reasoning:
+      enabled: false
+    temperature: 0
+    timeoutMs: 30000
+    retries: 2
+
+  transcribeFallback:
+    description: "Fallback audio transcription model if the primary transcriber is unavailable."
+    model: gemini-3.5-flash-lite
+    reasoning:
+      enabled: true
+      thinkingLevel: MINIMAL
+      includeThoughts: false
+    temperature: 0
+    timeoutMs: 30000
+    retries: 2

@@ -7,6 +7,8 @@ import type { Picks, Selection, Tool } from "../canvas/context";
 import { componentBindings, getComponents, getDataModel, resolveText } from "../a2ui/tree";
 import { ScreenFrame } from "../a2ui/ScreenFrame";
 import { IconAlert, IconBranch, IconChevron, IconComment, IconLasso, IconPerson, IconSpark, IconX } from "./icons";
+import { useBrowserVoice } from "./useBrowserVoice";
+import { VoiceButton, VoiceFeedback } from "./VoiceButton";
 
 // Figma-style properties panel for whatever is selected: a picked component, a screen, a step
 // or a transition, plus session replay. Rendered in the right panel (desktop) or the left
@@ -296,6 +298,7 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
   const notes = p.annotations[shown.id] ?? [];
   const versions = p.versionsOf(screen.id);
   const [text, setText] = useState("");
+  const voice = useBrowserVoice({ value: text, onChange: setText });
   const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -304,6 +307,7 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
 
   const submit = () => {
     if (!text.trim() || p.branching) return;
+    voice.stop();
     p.onBranch(shown, text.trim());
   };
 
@@ -360,12 +364,13 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
             What if the user…
           </label>
           <div className="branch__row">
+            <VoiceButton voice={voice} disabled={p.branching} compact ariaLabel="Speak branch scenario" />
             <input
               id="branch-input"
               ref={input}
               className="nokeys"
               value={text}
-              placeholder="asks for something cheaper"
+              placeholder="Speak or type: asks for something cheaper"
               onChange={(e) => setText(e.target.value)}
               disabled={p.branching}
             />
@@ -373,6 +378,7 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
               {p.branching ? <span className="spinner" aria-label="Branching" /> : "Branch"}
             </button>
           </div>
+          <VoiceFeedback voice={voice} />
         </form>
       </section>
 

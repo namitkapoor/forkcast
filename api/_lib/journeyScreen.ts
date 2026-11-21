@@ -6,7 +6,7 @@ import type { Ingredients, Intent } from "../../src/journeys/types.js";
 import { getAt, getComponents, getDataModel, lintBindings, pinSurfaceId } from "./dataModel.js";
 import { HttpError, TimeoutError } from "./gemini.js";
 import { directCall, type JsonCaller } from "./journey.js";
-import { models } from "./models.js";
+import { getLlmConfig, type ResolvedLlmConfig } from "./models.js";
 
 /** Current generator prompt: grounded and tailored to what the assistant knows about the traveler. */
 export const GEN_PROMPT_VERSION = "gen-v2";
@@ -229,17 +229,27 @@ export async function generateJourneyScreen(
   const system = v0 ? JOURNEY_SYSTEM_V0() : v2 ? JOURNEY_SYSTEM_V2() : JOURNEY_SYSTEM();
   const prompt = v0 ? buildBaselinePrompt(input) : v2 ? buildJourneyPromptV2(input) : buildJourneyPrompt(input);
 
-  let first: { data: ModelScreen; model: string } | undefined;
-  for (const model of [models.generator, models.generatorFallback]) {
-    const timeoutMs = Math.min(model === models.generator ? (opts.primaryTimeoutMs ?? 75_000) : remaining(), remaining());
+  const primaryCfg = getLlmConfig("generator");
+  const fallbackCfg = getLlmConfig("generatorFallback");
+  let first: { data: ModelScreen; model: string; cfg: ResolvedLlmConfig } | undefined;
+  for (const cfg of [primaryCfg, fallbackCfg]) {
+    const timeoutMs = Math.min(cfg === primaryCfg ? (opts.primaryTimeoutMs ?? Math.max(cfg.timeoutMs, 75_000)) : remaining(), remaining());
     if (timeoutMs < 3000) break;
     try {
-      const r = await call<ModelScreen>("generator", { model, system, prompt, temperature: 0.8, timeoutMs, retries: 5 });
-      attempts.push({ model, ms: r.ms, ok: true });
-      first = r;
+      const r = await call<ModelScreen>("generator", {
+        model: cfg.model,
+        system,
+        prompt,
+        temperature: cfg.temperature ?? 0.8,
+        thinkingConfig: cfg.thinkingConfig,
+        timeoutMs,
+        retries: Math.max(cfg.retries, 5),
+      });
+      attempts.push({ model: cfg.model, ms: r.ms, ok: true });
+      first = { ...r, cfg };
       break;
     } catch (e) {
-      attempts.push({ model, ms: 0, ok: false, error: e instanceof TimeoutError ? "timeout" : String((e as Error)?.message ?? e).slice(0, 200) });
+      attempts.push({ model: cfg.model, ms: 0, ok: false, error: e instanceof TimeoutError ? "timeout" : String((e as Error)?.message ?? e).slice(0, 200) });
     }
   }
   if (!first) throw new HttpError(502, "screen generation failed", attempts);
@@ -264,7 +274,15 @@ export async function generateJourneyScreen(
       `Return the corrected full JSON object (same shape). Fix every problem; keep the layout otherwise.`,
     ].join("\n");
     try {
-      const r = await call<ModelScreen>("generator-repair", { model: usedModel, system, prompt: repairPrompt, temperature: 0.3, timeoutMs: remaining(), retries: 3 });
+      const r = await call<ModelScreen>("generator-repair", {
+        model: usedModel,
+        system,
+        prompt: repairPrompt,
+        temperature: first.cfg.repairTemperature ?? 0.3,
+        thinkingConfig: first.cfg.thinkingConfig,
+        timeoutMs: remaining(),
+        retries: 3,
+      });
       attempts.push({ model: usedModel, ms: r.ms, ok: true });
       const res2 = check(r.data, id, carry);
       if (res2.a2ui.length <= res.a2ui.length) {
@@ -389,14 +407,16 @@ export async function fillPinnedScreen(
   let problems: string[] = [];
   let best: { messages: A2uiMessage[]; lint: string[] } | undefined;
   let feedback = "";
+  const pinCfg = getLlmConfig("pinFill");
   for (let round = 0; round < 3 && !best; round++) {
     const r = await call<{ value?: unknown }>("pin-fill", {
-      model: models.pinFill,
+      model: pinCfg.model,
       system: PIN_SYSTEM,
       prompt: feedback ? `${prompt}\n\nYour previous data model had these problems:\n${feedback}\nReturn the corrected JSON.` : prompt,
-      temperature: round ? 0.2 : 0.4,
-      timeoutMs: 45_000,
-      retries: 5,
+      temperature: round ? (pinCfg.repairTemperature ?? 0.2) : (pinCfg.temperature ?? 0.4),
+      thinkingConfig: pinCfg.thinkingConfig,
+      timeoutMs: pinCfg.timeoutMs,
+      retries: pinCfg.retries,
     });
     attempts.push({ model: r.model, ms: r.ms, ok: true });
     const value = isObj(r.data?.value) ? r.data.value : isObj(r.data) ? (r.data as Obj) : {};
@@ -418,7 +438,7 @@ export async function fillPinnedScreen(
     variant: pinned.variant,
     rationale: `Pinned layout from ${pinned.id}; data refilled from this turn's tool results.`,
     messages,
-    model: models.pinFill,
+    model: pinCfg.model,
     createdAt: new Date().toISOString(),
     annotations: [],
   };

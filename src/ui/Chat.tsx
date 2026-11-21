@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type Ref } from "react";
 import type { Annotation } from "../a2ui/types";
 import type { Picked } from "../canvas/context";
 import { IconAlert, IconChat, IconCheck, IconDevice, IconFlag, IconSend, IconSpark, IconStep, IconX } from "./icons";
+import { useBrowserVoice } from "./useBrowserVoice";
+import { VoiceButton, VoiceFeedback } from "./VoiceButton";
 
 // Chat-first panel, scoped to the current selection. On a screen, instructions edit it (lassoed
 // components or the whole screen); elsewhere, questions about the run get short answers.
@@ -52,28 +54,32 @@ export function Chat(p: ChatProps) {
     return () => window.clearInterval(t);
   }, [p.busy]);
 
+  const voice = useBrowserVoice({ value: text, onChange: setText });
+
   const editing = p.scope === "screen";
   const canSend = !!text.trim() && !p.busy;
   const send = () => {
     if (!canSend) return;
+    voice.stop();
     p.onSend(text.trim());
     setText("");
   };
   const flag = () => {
     if (!text.trim() || !p.picks.length) return;
+    voice.stop();
     p.onFlag(text.trim(), kind);
     setText("");
   };
   const placeholder = editing
     ? p.picks.length
-      ? `Change ${p.picks.length === 1 ? "this component" : `these ${p.picks.length} components`}, or flag what's wrong…`
-      : "What would you like to change or test?"
-    : "Ask about this run…";
+      ? `Speak or type changes for ${p.picks.length === 1 ? "this component" : `these ${p.picks.length} components`}…`
+      : "Speak or type what you'd like to change or test…"
+    : "Speak or ask about this run…";
   const hint = editing
     ? p.picks.length
       ? "Enter to edit · Flag saves a note"
-      : "Applies to the whole screen · press L to lasso · end with ? to ask"
-    : "Enter to send · Shift+Enter for a new line";
+      : "Whole screen · L to lasso · ? to ask"
+    : "Enter to send · Shift+Enter for new line";
   const ScopeIcon = p.scope === "screen" ? IconDevice : p.scope === "run" ? IconChat : IconStep;
 
   return (
@@ -132,7 +138,7 @@ export function Chat(p: ChatProps) {
           </div>
         )}
       </div>
-      <div className="chat__composer">
+      <div className={`chat__composer${voice.isListening ? " is-listening" : ""}`}>
         {(p.picks.length > 0 || editing) && (
           <div className="chat__chips">
             {p.picks.length === 0 && <span className="selchip selchip--scope">Whole screen</span>}
@@ -160,13 +166,16 @@ export function Chat(p: ChatProps) {
               send();
             } else if (e.key === "Escape") {
               e.stopPropagation();
-              if (p.picks.length) p.onClearPicks();
+              if (voice.isListening) voice.stop();
+              else if (p.picks.length) p.onClearPicks();
               else (e.target as HTMLTextAreaElement).blur();
             }
           }}
           aria-label="Message"
         />
+        <VoiceFeedback voice={voice} />
         <div className="chat__bar">
+          <VoiceButton voice={voice} disabled={!!p.busy} label="Speak" ariaLabel="Speak message" />
           <span className="chat__hint">{hint}</span>
           {editing && p.picks.length > 0 && (
             <>

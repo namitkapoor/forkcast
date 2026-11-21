@@ -11,6 +11,7 @@ import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
 import { loadDotEnv } from "../api/_lib/env";
 import { parseJsonLoose } from "../api/_lib/gemini";
+import { getLlmConfig } from "../api/_lib/models";
 import { summarize } from "../src/journeys/aggregate.js";
 import type { JourneysFile } from "../src/journeys/types.js";
 import { newStats, rejudgeFile, type JudgeCall } from "./judge-core.js";
@@ -33,7 +34,7 @@ if (!files.length) {
   process.exit(1);
 }
 
-const MODELS = [process.env.FORKCAST_MODEL_JUDGE?.trim() || "gemini-4-neon", process.env.FORKCAST_MODEL_JUDGE_FALLBACK?.trim() || "gemini-4-argon"];
+const JUDGE_CONFIGS = [getLlmConfig("judge"), getLlmConfig("judgeFallback")];
 const cachedOnly = flag("cached-only");
 let client: GoogleGenAI | undefined;
 
@@ -45,21 +46,27 @@ const call: JudgeCall = async (system, prompt) => {
   if (!key) throw new Error("GEMINI_API_KEY missing (expected in .env)");
   client ??= new GoogleGenAI({ apiKey: key });
   let last: unknown;
-  for (const model of MODELS) {
-    for (let attempt = 0; attempt < 3; attempt++) {
+  for (const cfg of JUDGE_CONFIGS) {
+    for (let attempt = 0; attempt < cfg.retries; attempt++) {
       const t0 = Date.now();
       try {
         const res = await client.models.generateContent({
-          model,
+          model: cfg.model,
           contents: prompt,
-          config: { systemInstruction: system, responseMimeType: "application/json", temperature: 0, abortSignal: AbortSignal.timeout(60_000) },
+          config: {
+            systemInstruction: system,
+            responseMimeType: "application/json",
+            temperature: cfg.temperature ?? 0,
+            ...(cfg.thinkingConfig ? { thinkingConfig: cfg.thinkingConfig } : {}),
+            abortSignal: AbortSignal.timeout(cfg.timeoutMs),
+          },
         });
         const text = res.text;
-        if (!text) throw new Error(`${model} returned an empty response`);
+        if (!text) throw new Error(`${cfg.model} returned an empty response`);
         const u = res.usageMetadata;
         return {
           data: parseJsonLoose(text),
-          info: { model, ms: Date.now() - t0, inputTokens: u?.promptTokenCount, outputTokens: (u?.candidatesTokenCount ?? 0) + (u?.thoughtsTokenCount ?? 0) },
+          info: { model: cfg.model, ms: Date.now() - t0, inputTokens: u?.promptTokenCount, outputTokens: (u?.candidatesTokenCount ?? 0) + (u?.thoughtsTokenCount ?? 0) },
         };
       } catch (e) {
         last = e;

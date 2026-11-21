@@ -1,10 +1,12 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, type ThinkingConfig } from "@google/genai";
+import { loadDotEnv } from "./env.js";
 
 let client: GoogleGenAI | undefined;
 
-function getClient(): GoogleGenAI {
+export function getGeminiClient(): GoogleGenAI {
+  if (!process.env.GEMINI_API_KEY?.trim()) loadDotEnv();
   const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) throw new HttpError(500, "GEMINI_API_KEY is not set on the server");
+  if (!apiKey) throw new HttpError(500, "GEMINI_API_KEY is not set on the server (expected in .env)");
   client ??= new GoogleGenAI({ apiKey });
   return client;
 }
@@ -27,6 +29,8 @@ export interface JsonCallOptions {
   system: string;
   prompt: string;
   temperature?: number;
+  /** Reasoning / thinking capability config sourced from config.yaml. */
+  thinkingConfig?: ThinkingConfig;
   /** Per-attempt timeout. */
   timeoutMs?: number;
   /** Retries on 429 / 5xx / network errors (exponential backoff). Timeouts are not retried. */
@@ -81,13 +85,14 @@ async function once(opts: JsonCallOptions): Promise<string> {
   });
   try {
     const res = await Promise.race([
-      getClient().models.generateContent({
+      getGeminiClient().models.generateContent({
         model: opts.model,
         contents: opts.prompt,
         config: {
           systemInstruction: opts.system,
           responseMimeType: "application/json",
           temperature: opts.temperature,
+          ...(opts.thinkingConfig ? { thinkingConfig: opts.thinkingConfig } : {}),
           abortSignal: ctrl.signal,
         },
       }),
