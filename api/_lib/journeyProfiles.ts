@@ -35,10 +35,11 @@ export const PROFILES: Record<string, TravelerProfile> = {
       "arrival time matters: meetings on arrival",
       "refundable / flexible fares",
       "status perks when relevant: lounge access, priority boarding",
+      "open with a prominent status card right under the title: a star Icon, bold \"Alliance elite status\", and the perks that apply (lounge access, priority boarding, cabin bag), so her status visibly makes itself known",
     ],
     travelers: "1 adult",
     bags: "carry-on only",
-    device: "desktop: a dense comparison is fine",
+    device: "phone: compact cards, one fare per card, arrival time large",
     extraTools: ["nonstopOnly"],
   },
   "budget-couple": {
