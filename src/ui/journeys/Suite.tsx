@@ -16,7 +16,7 @@ const METRICS: { label: string; get: (s: SuiteSummary) => number | undefined; fm
   },
   { label: "Made-up facts on screen", get: (s) => s.failingChecks.grounding, fmt: (v) => String(v), lowerIsBetter: true },
   { label: "Goal met", get: (s) => s.goalRate, fmt: pct },
-  { label: "Turns on pinned UI", get: (s) => s.pinnedShare, fmt: pct },
+  // hidden for demo:   { label: "Turns on pinned UI", get: (s) => s.pinnedShare, fmt: pct },
 ];
 
 interface Props {
@@ -62,7 +62,7 @@ export function Suite({ file, heroFile, mode, onMode, queryId, turn, onQuery, on
           <div className="jr-strip__legend">
             <span className="muted">{file.baseline ? `Naive prompt (${file.baseline.promptVersion})` : "Before"}</span>
             <span className="jr-strip__arrow">→</span>
-            <span>Grounded + pinned</span>
+            <span>Grounded + persona-aware (gen-v2)</span>
           </div>
           {METRICS.map((m) => {
             const a = m.get(before);
