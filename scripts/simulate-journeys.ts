@@ -4,7 +4,8 @@
 //
 // Usage: npm run simulate:journeys -- [--runs 2] [--queries a,b] [--personas x,y] [--concurrency 6]
 //          [--pins <file>] [--pins-source <journeys file>] [--out public/data/journeys.json] [--tag t]
-//          [--converge] [--no-cache] [--prompt gen-v1|gen-v0] [--baseline <journeys file from a gen-v0 run>]
+//          [--converge] [--before-out <file>] [--no-cache] [--prompt gen-v2|gen-v1|gen-v0]
+//          [--baseline <journeys file from a gen-v0 run>]
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -14,7 +15,8 @@ import { callJson } from "../api/_lib/gemini";
 import { modelSnapshot, models } from "../api/_lib/models";
 import { screenToText } from "../api/_lib/dataModel";
 import { personaStep, planTurn, type JsonCaller } from "../api/_lib/journey";
-import { BASELINE_PROMPT_VERSION, fillPinnedScreen, generateJourneyScreen, GEN_PROMPT_VERSION, PIN_PROMPT_VERSION, type GenPromptVersion, type JourneyScreenResult } from "../api/_lib/journeyScreen";
+import { profileCarry } from "../api/_lib/journeyProfiles";
+import { fillPinnedScreen, generateJourneyScreen, GEN_PROMPT_VERSION, PIN_PROMPT_VERSION, pinShapeMismatch, PROMPT_VERSIONS, type GenPromptVersion, type JourneyScreenResult } from "../api/_lib/journeyScreen";
 import { validateMessages } from "../src/a2ui/validate";
 import type { Screen } from "../src/a2ui/types";
 import type { Fare } from "../src/domains/flights/fares";
@@ -38,7 +40,7 @@ const RUNS = num("--runs", 2);
 const CONCURRENCY = num("--concurrency", 6);
 const MAX_TURNS = 5;
 const OUT = path.resolve(flag("--out") ?? "public/data/journeys.json");
-const BEFORE_OUT = OUT.replace(/\.json$/, ".before.json");
+const BEFORE_OUT = path.resolve(flag("--before-out") ?? OUT.replace(/\.json$/, ".before.json"));
 const TAG = flag("--tag") ?? "";
 const CONVERGE = argv.includes("--converge");
 const USE_CACHE = !argv.includes("--no-cache");
@@ -46,11 +48,13 @@ const PINS_FILE = flag("--pins");
 const PINS_SOURCE = flag("--pins-source");
 const CACHE_DIR = path.resolve(".cache/journeys");
 const PROMPT = (flag("--prompt") ?? GEN_PROMPT_VERSION) as GenPromptVersion;
-if (PROMPT !== GEN_PROMPT_VERSION && PROMPT !== BASELINE_PROMPT_VERSION) {
-  console.error(`--prompt must be ${GEN_PROMPT_VERSION} or ${BASELINE_PROMPT_VERSION}`);
+if (!PROMPT_VERSIONS.includes(PROMPT)) {
+  console.error(`--prompt must be one of ${PROMPT_VERSIONS.join(", ")}`);
   process.exit(1);
 }
 const BASELINE_FILE = flag("--baseline");
+/** gen-v2 knows the traveler: the profile rides in carry (so it is grounded) and the planner adds derived tools. */
+const PROFILE_AWARE = PROMPT === GEN_PROMPT_VERSION;
 
 const queryIds = list("--queries");
 const personaIds = list("--personas");
@@ -109,6 +113,7 @@ const stats = {
   repaired: 0,
   pinned: 0,
   pinFallbacks: 0,
+  pinSkips: 0,
   validationFailures: [] as string[],
   errors: [] as string[],
 };
@@ -146,6 +151,8 @@ const safeId = (s: string) => s.replace(/[^a-zA-Z0-9-]/g, "-");
 interface RunCtx {
   pins: Map<string, Pin>;
   pinScreens: Map<string, Screen>;
+  /** Ingredients each pinnable screen was generated from, to refuse a pin when fresh results differ in shape. */
+  pinEvidence: Map<string, Ingredients>;
   checkTurn?: CheckTurn;
   checkGoal?: CheckGoal;
 }
@@ -156,6 +163,8 @@ async function runJourney(query: Query, persona: Persona, run: number, rc: RunCt
   const history: string[] = [];
   let constraints = { ...query.constraints };
   let carry: Record<string, unknown> = { pax: Number(persona.context.pax ?? 1) || 1, currency: persona.context.currency ?? "EUR" };
+  const profile = PROFILE_AWARE ? profileCarry(persona.id) : undefined;
+  if (profile) carry.profile = profile;
   const seenFares: Fare[] = [];
   let userMessage = query.text;
   let outcome: JourneyOutcome = "max-turns";
@@ -164,7 +173,7 @@ async function runJourney(query: Query, persona: Persona, run: number, rc: RunCt
     for (let i = 0; i < MAX_TURNS; i++) {
       const t0 = Date.now();
       const call = makeCaller(`${id}:t${i}`);
-      const plan = await planTurn({ query, persona, turnIndex: i, userMessage, history, constraints, seenFares, carry }, id, call);
+      const plan = await planTurn({ query, persona, turnIndex: i, userMessage, history, constraints, seenFares, carry, profileAware: PROFILE_AWARE }, id, call);
       const ingredients: Ingredients = {
         context: persona.context,
         history: [...history],
@@ -177,7 +186,13 @@ async function runJourney(query: Query, persona: Persona, run: number, rc: RunCt
 
       let result: JourneyScreenResult | undefined;
       const pin = rc.pins.get(pinKey(plan.intent, persona.id));
-      const pinned = pin ? rc.pinScreens.get(pin.screenId) : undefined;
+      let pinned = pin ? rc.pinScreens.get(pin.screenId) : undefined;
+      const mismatch = pin && pinned ? pinShapeMismatch(rc.pinEvidence.get(pin.screenId), ingredients) : undefined;
+      if (mismatch) {
+        pinned = undefined;
+        stats.pinSkips++;
+        ingredients.history.push(`pin skipped: ${mismatch} (pinned ${pin!.screenId}); generated freely`);
+      }
       if (pin && pinned) {
         try {
           result = await fillPinnedScreen({ ...input, pinned }, { call });
@@ -299,6 +314,9 @@ function writeFile(file: string, journeys: Journey[], extra: Partial<JourneysFil
 function screensOf(journeys: Journey[]): Map<string, Screen> {
   return new Map(journeys.flatMap((j) => j.turns.map((t) => [t.screen.id, t.screen] as const)));
 }
+function evidenceOf(journeys: Journey[]): Map<string, Ingredients> {
+  return new Map(journeys.flatMap((j) => j.turns.map((t) => [t.screen.id, t.ingredients] as const)));
+}
 
 // ---------------------------------------------------------------- main
 async function main() {
@@ -309,6 +327,7 @@ async function main() {
 
   let pins = new Map<string, Pin>();
   let pinScreens = new Map<string, Screen>();
+  let pinEvidence = new Map<string, Ingredients>();
   let pinList: Pin[] | undefined;
   if (PINS_FILE) {
     const raw = JSON.parse(readFileSync(path.resolve(PINS_FILE), "utf8")) as Pin[] | JourneysFile;
@@ -316,11 +335,12 @@ async function main() {
     const sourceFile = PINS_SOURCE ?? (Array.isArray(raw) || !raw.journeys?.length ? BEFORE_OUT : PINS_FILE);
     const source = JSON.parse(readFileSync(path.resolve(sourceFile), "utf8")) as JourneysFile;
     pinScreens = screensOf(source.journeys);
+    pinEvidence = evidenceOf(source.journeys);
     pins = new Map(pinList.filter((p) => pinScreens.has(p.screenId)).map((p) => [p.key, p]));
     console.log(`pins: ${pins.size}/${pinList.length} usable (screens from ${sourceFile})`);
   }
 
-  const before = await runSuite({ pins, pinScreens, checkTurn, checkGoal }, PINS_FILE ? "pinned run" : "run");
+  const before = await runSuite({ pins, pinScreens, pinEvidence, checkTurn, checkGoal }, PINS_FILE ? "pinned run" : "run");
   let final = before;
   let extra: Partial<JourneysFile> = pinList ? { pins: pinList } : {};
 
@@ -337,7 +357,7 @@ async function main() {
       const usable = chosen.filter((p) => screens.has(p.screenId));
       console.log(`converge: ${chosen.length} pins chosen (${usable.length} usable): ${usable.map((p) => `${p.key}←${p.screenId}`).join(", ") || "none"}`);
       console.log(`previous: pass ${(previous.passRate * 100).toFixed(0)}% goal ${(previous.goalRate * 100).toFixed(0)}% booked ${(previous.bookedRate * 100).toFixed(0)}%`);
-      final = await runSuite({ pins: new Map(usable.map((p) => [p.key, p])), pinScreens: screens, checkTurn, checkGoal }, "converged re-run");
+      final = await runSuite({ pins: new Map(usable.map((p) => [p.key, p])), pinScreens: screens, pinEvidence: evidenceOf(before), checkTurn, checkGoal }, "converged re-run");
       const after = summarize(final);
       console.log(`after:    pass ${(after.passRate * 100).toFixed(0)}% goal ${(after.goalRate * 100).toFixed(0)}% booked ${(after.bookedRate * 100).toFixed(0)}% pinned ${(after.pinnedShare * 100).toFixed(0)}%`);
       extra = { pins: chosen, previous };
@@ -359,7 +379,7 @@ async function main() {
 
   const genAvg = stats.genMs.length ? stats.genMs.reduce((a, b) => a + b, 0) / stats.genMs.length : 0;
   console.log(
-    `\ntotals: wall ${secs(Date.now() - t0)} · LLM calls ${JSON.stringify(stats.calls)} · cache hits ${stats.cacheHits} · generator avg ${secs(genAvg)} over ${stats.genMs.length} fresh · repaired ${stats.repaired} · pinned turns ${stats.pinned} (fallbacks ${stats.pinFallbacks}) · validation failures ${stats.validationFailures.length} · errors ${stats.errors.length}`,
+    `\ntotals: wall ${secs(Date.now() - t0)} · LLM calls ${JSON.stringify(stats.calls)} · cache hits ${stats.cacheHits} · generator avg ${secs(genAvg)} over ${stats.genMs.length} fresh · repaired ${stats.repaired} · pinned turns ${stats.pinned} (fallbacks ${stats.pinFallbacks}, shape skips ${stats.pinSkips}) · validation failures ${stats.validationFailures.length} · errors ${stats.errors.length}`,
   );
   for (const f of stats.validationFailures) console.log(`  invalid: ${f}`);
   for (const e of stats.errors) console.log(`  error: ${e}`);

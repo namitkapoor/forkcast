@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { loadHeroJourneys, loadJourneys, shortPersona, sortQueries, truncate, type LoadedJourneys } from "./data";
+import { loadHeroJourneys, loadJourneys, loadNaiveJourneys, type HeroMode, shortPersona, sortQueries, truncate, type LoadedJourneys } from "./data";
 import { Suite } from "./Suite";
 import { JourneyView } from "./JourneyView";
 import { IconBack } from "./icons";
@@ -13,6 +13,9 @@ type Nav = { level: 1 } | { level: 3; queryId: string; personaId: string; run: n
 export function JourneysPage() {
   const [data, setData] = useState<LoadedJourneys | null | "loading">("loading");
   const [unpinned, setUnpinned] = useState<JourneysFile | null>(null);
+  const [naive, setNaive] = useState<JourneysFile | null>(null);
+  // The problem first: the hero opens on the naive-prompt run.
+  const [mode, setMode] = useState<HeroMode>("naive");
   const [nav, setNav] = useState<Nav>({ level: 1 });
   // Hero state lives here so coming back from a journey lands where you left.
   const [heroQuery, setHeroQuery] = useState<string | null>(null);
@@ -21,9 +24,10 @@ export function JourneysPage() {
   useEffect(() => {
     let live = true;
     // The hero waits for both so it never flips from pinned to unpinned screens mid-view.
-    Promise.all([loadJourneys(), loadHeroJourneys()]).then(([d, u]) => {
+    Promise.all([loadJourneys(), loadHeroJourneys(), loadNaiveJourneys()]).then(([d, u, n]) => {
       if (!live) return;
       setUnpinned(u);
+      setNaive(n);
       setData(d);
     });
     return () => {
@@ -60,7 +64,8 @@ export function JourneysPage() {
   if (!data) return <div className="page-stub">No journeys found. Expected /data/journeys.json or /data/journeys.sample.json.</div>;
 
   const { file } = data;
-  const heroFile = unpinned ?? file;
+  const checkedFile = unpinned ?? file;
+  const heroFile = mode === "naive" && naive ? naive : checkedFile;
   const queryId = heroQuery ?? sortQueries(heroFile.queries)[0]?.id ?? "";
 
   if (nav.level === 1) {
@@ -69,6 +74,8 @@ export function JourneysPage() {
         <Suite
           file={file}
           heroFile={heroFile}
+          mode={naive ? mode : undefined}
+          onMode={setMode}
           queryId={queryId}
           turn={heroTurn}
           onQuery={setHeroQuery}

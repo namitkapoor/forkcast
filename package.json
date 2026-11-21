@@ -13,7 +13,8 @@
     "simulate:llm": "tsx scripts/simulate-llm.ts",
     "typecheck:api": "tsc --noEmit -p api",
     "simulate:journeys": "tsx scripts/simulate-journeys.ts",
-    "check:journeys": "tsx scripts/journeys-check.ts"
+    "check:journeys": "tsx scripts/journeys-check.ts",
+    "judge:personas": "tsx scripts/judge-personas.ts"
   },
   "dependencies": {
     "@a2ui/react": "^0.15.0",

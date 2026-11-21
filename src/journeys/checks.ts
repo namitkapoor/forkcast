@@ -2,6 +2,7 @@
 // Pure TypeScript, no DOM: runs in the browser, in scripts and on the server.
 import type { Screen } from "../a2ui/types.js";
 import { bestFare, type Fare } from "../domains/flights/fares.js";
+import { checkPersonaRules } from "./personaContracts.js";
 import type { CheckKind, CheckResult, Journey, Persona, Query, Turn } from "./types.js";
 
 type Obj = Record<string, unknown>;
@@ -74,9 +75,27 @@ export function componentCount(screen: Screen): number {
 /** Props whose (resolved) value is shown to the person. Action contexts and icon names are not. */
 const TEXT_PROPS = ["text", "label", "title", "value", "placeholder", "description", "hint", "caption"];
 
-interface Shown {
+export interface Shown {
   componentId: string;
   text: string;
+  /** Rendered instances from the root down to this component: "id" or "id@/fares/2" inside list templates. */
+  path: string[];
+  /** Catalog component type ("Text", "CheckBox"…). */
+  component?: string;
+  /** Set for on/off state (CheckBox, Switch): text is "[on]" or "[off]". */
+  toggle?: boolean;
+}
+
+/**
+ * A text digest of what a screen shows, for an LLM judge: one line per rendered text, in reading order,
+ * "componentId (Type): text", with list-template instances marked "[item 2]" and toggles as [on]/[off].
+ */
+export function screenDigest(screen: Screen, maxLines = 160): string {
+  const lines = displayedText(screen).map((s) => {
+    const item = /@\/.*\/(\d+)$/.exec(s.path[s.path.length - 1] ?? "")?.[1] ?? /@\/.*\/(\d+)$/.exec(s.path.find((p) => p.includes("@/")) ?? "")?.[1];
+    return `${s.componentId}${s.component ? ` (${s.component})` : ""}${item !== undefined ? ` [item ${Number(item) + 1}]` : ""}: ${s.text.replace(/\s+/g, " ").trim()}`;
+  });
+  return lines.length > maxLines ? [...lines.slice(0, maxLines), `… ${lines.length - maxLines} more lines`].join("\n") : lines.join("\n");
 }
 
 /** Every displayed string on a screen, attributed to the component that renders it. */
@@ -88,8 +107,9 @@ export function displayedText(screen: Screen): Shown[] {
   const out: Shown[] = [];
 
   const resolve = (v: unknown, scope: string[]): unknown => {
-    if (typeof v === "string" || typeof v === "number") return v;
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return v;
     if (isObj(v)) {
+      if (typeof v.literalBoolean === "boolean") return v.literalBoolean;
       if (typeof v.path === "string") {
         const parts = v.path.startsWith("/") ? pointerParts(v.path) : [...scope, ...pointerParts(v.path)];
         return getAt(model, parts);
@@ -99,39 +119,46 @@ export function displayedText(screen: Screen): Shown[] {
     }
     return undefined;
   };
-  const emit = (id: string, v: unknown, scope: string[]) => {
+  const emit = (id: string, v: unknown, scope: string[], path: string[]) => {
     const r = resolve(v, scope);
-    if (typeof r === "string" && r.trim()) out.push({ componentId: id, text: r });
-    else if (typeof r === "number") out.push({ componentId: id, text: String(r) });
+    const component = typeof byId.get(id)?.component === "string" ? String(byId.get(id)!.component) : undefined;
+    if (typeof r === "string" && r.trim()) out.push({ componentId: id, text: r, path, component });
+    else if (typeof r === "number") out.push({ componentId: id, text: String(r), path, component });
   };
 
   const seen = new Set<string>();
-  const visit = (id: string, scope: string[], depth: number) => {
+  const visit = (id: string, scope: string[], depth: number, parent: string[]) => {
     const c = byId.get(id);
     const key = `${id}@${scope.join("/")}`;
     if (!c || seen.has(key) || depth > 60) return;
     seen.add(key);
-    for (const p of TEXT_PROPS) if (p in c) emit(id, c[p], scope);
-    if (Array.isArray(c.options)) for (const o of c.options) if (isObj(o)) emit(id, o.label, scope);
+    const path = [...parent, scope.length ? `${id}@/${scope.join("/")}` : id];
+    for (const p of TEXT_PROPS) if (p in c) emit(id, c[p], scope, path);
+    for (const p of ["value", "checked", "selected"]) {
+      if (!(p in c)) continue;
+      const r = resolve(c[p], scope);
+      if (typeof r === "boolean") out.push({ componentId: id, text: r ? "[on]" : "[off]", path, component: String(c.component ?? ""), toggle: true });
+    }
+    if (Array.isArray(c.options)) for (const o of c.options) if (isObj(o)) emit(id, o.label, scope, path);
     if (Array.isArray(c.tabs))
       for (const t of c.tabs)
         if (isObj(t)) {
-          emit(id, t.title, scope);
-          if (typeof t.child === "string") visit(t.child, scope, depth + 1);
+          emit(id, t.title, scope, path);
+          if (typeof t.child === "string") visit(t.child, scope, depth + 1, path);
         }
-    if (typeof c.child === "string") visit(c.child, scope, depth + 1);
-    if (Array.isArray(c.children)) for (const ch of c.children) if (typeof ch === "string") visit(ch, scope, depth + 1);
+    if (typeof c.child === "string") visit(c.child, scope, depth + 1, path);
+    if (Array.isArray(c.children)) for (const ch of c.children) if (typeof ch === "string") visit(ch, scope, depth + 1, path);
     if (isObj(c.children) && typeof c.children.componentId === "string" && typeof c.children.path === "string") {
       const p = c.children.path;
       const base = p.startsWith("/") ? pointerParts(p) : [...scope, ...pointerParts(p)];
       const items = getAt(model, base);
       const tpl = c.children.componentId;
       const keys = Array.isArray(items) ? items.map((_, i) => String(i)) : isObj(items) ? Object.keys(items) : [];
-      for (const k of keys) visit(tpl, [...base, k], depth + 1);
+      for (const k of keys) visit(tpl, [...base, k], depth + 1, path);
     }
   };
 
-  if (byId.has("root")) visit("root", [], 0);
+  if (byId.has("root")) visit("root", [], 0, []);
   else {
     // No root: start from components nobody references.
     const referenced = new Set<string>();
@@ -140,13 +167,14 @@ export function displayedText(screen: Screen): Shown[] {
       if (Array.isArray(c.children)) c.children.forEach((x) => typeof x === "string" && referenced.add(x));
       if (isObj(c.children) && typeof c.children.componentId === "string") referenced.add(c.children.componentId);
     }
-    for (const c of comps) if (!referenced.has(String(c.id))) visit(String(c.id), [], 0);
+    for (const c of comps) if (!referenced.has(String(c.id))) visit(String(c.id), [], 0, []);
   }
   return out;
 }
 
 export function screenText(screen: Screen): string {
   return displayedText(screen)
+    .filter((s) => !s.toggle)
     .map((s) => s.text)
     .join("\n");
 }
@@ -222,7 +250,7 @@ export function extractFacts(screen: Screen): Fact[] {
 const looksLikeFare = (v: unknown): v is Partial<Fare> & { flightId: string } => isObj(v) && typeof v.flightId === "string";
 
 /** Fare-like objects anywhere in carry (carry itself, carry.fare, carry.selected, arrays…). */
-function faresInCarry(carry: Obj): Partial<Fare>[] {
+export function faresInCarry(carry: Obj): Partial<Fare>[] {
   const out: Partial<Fare>[] = [];
   const walk = (v: unknown, depth: number) => {
     if (depth > 4) return;
@@ -234,7 +262,7 @@ function faresInCarry(carry: Obj): Partial<Fare>[] {
   return out;
 }
 
-const toolFares = (t: Pick<Turn, "ingredients">): Fare[] => (t.ingredients?.toolResults ?? []).flatMap((r) => r.fares ?? []);
+export const toolFares = (t: Pick<Turn, "ingredients">): Fare[] => (t.ingredients?.toolResults ?? []).flatMap((r) => r.fares ?? []);
 
 interface Truth {
   prices: Set<string>;
@@ -371,6 +399,8 @@ export function checkTurn(
   for (const kind of ["grounding", "carry", "schema"] as const) {
     if (!results.some((r) => r.kind === kind)) results.push({ kind, ok: true, message: ok[kind] });
   }
+  // persona: rule contracts only (judge contracts come from scripts/judge-personas.ts, so this stays offline).
+  if (ctx.persona.contracts?.length) results.push(...checkPersonaRules(turn, ctx.persona, ctx.prevTurns));
   return results;
 }
 

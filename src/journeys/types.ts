@@ -4,6 +4,20 @@ import type { Context } from "../graph/types";
 import type { Screen } from "../a2ui/types";
 import type { Fare, FareConstraints } from "../domains/flights/fares";
 
+/**
+ * "Did this screen actually serve this person?" A persona-specific promise checked on the turns it applies to.
+ * `rule` contracts are checked offline in checkTurn (src/journeys/personaContracts.ts);
+ * `judge` contracts are scored by an LLM judge (scripts/judge-personas.ts) and written into turn.checks.
+ */
+export interface PersonaContract {
+  id: string;
+  label: string;
+  appliesTo: Intent[];
+  kind: "rule" | "judge";
+  /** Plain-language statement of the rule (also given to the judge). */
+  rule?: string;
+}
+
 export interface Persona {
   id: string; // "family" | "solo" | "budget-couple"
   label: string; // "Family of 4 · phone · EUR"
@@ -16,6 +30,8 @@ export interface Persona {
   context: Context; // { party, pax, surface, currency, origin }
   /** How this persona behaves, for the simulated user prompt. */
   style: string;
+  /** What serving this person means, checked per turn as kind "persona". */
+  contracts?: PersonaContract[];
 }
 
 export interface Query {
@@ -54,7 +70,8 @@ export interface Ingredients {
   pinned?: { key: string; fromScreenId: string };
 }
 
-export type CheckKind = "grounding" | "carry" | "goal" | "schema";
+export type CheckKind = "grounding" | "carry" | "goal" | "schema" | "persona";
+export const CHECK_KINDS: CheckKind[] = ["grounding", "carry", "goal", "schema", "persona"];
 
 export interface CheckResult {
   kind: CheckKind;
@@ -64,6 +81,10 @@ export interface CheckResult {
   componentId?: string;
   /** The offending value, e.g. "09:15". */
   value?: string;
+  /** For kind "persona": the PersonaContract this result belongs to. */
+  contractId?: string;
+  /** For kind "persona": "rule" (offline) or "judge" (LLM). */
+  source?: "rule" | "judge";
 }
 
 export interface Turn {
@@ -111,6 +132,10 @@ export interface SuiteSummary {
   bookedRate: number;
   pinnedShare: number; // share of turns rendered from a pinned layout
   failingChecks: Record<CheckKind, number>;
+  /** Share of applicable persona-contract checks that pass ("serves the person"). Absent when none were run. */
+  servesRate?: number;
+  /** How many persona-contract checks were evaluated. */
+  personaChecks?: number;
 }
 
 export interface JourneysFile {

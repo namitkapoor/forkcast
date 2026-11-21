@@ -35,6 +35,18 @@ export interface Screen {
   model: string;
   createdAt: string;
   annotations: Annotation[];
+  /** Why the main components are there: which ingredient drove each choice (gen-v2 and later). */
+  decisions?: ScreenDecision[];
+}
+
+export type DecisionSource = "query" | "memory" | "context" | "tool" | "carry" | "history";
+export const DECISION_SOURCES: DecisionSource[] = ["query", "memory", "context", "tool", "carry", "history"];
+
+/** One design decision on a screen, tied to the ingredient that caused it. */
+export interface ScreenDecision {
+  componentId: string;
+  because: string;
+  source: DecisionSource;
 }
 
 /** A user action emitted by the renderer (button press etc.). */

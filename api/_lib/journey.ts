@@ -4,6 +4,7 @@ import type { Screen } from "../../src/a2ui/types.js";
 import { searchFares, type Fare, type FareConstraints } from "../../src/domains/flights/fares.js";
 import { INTENTS, type Ingredients, type Intent, type Persona, type Query } from "../../src/journeys/types.js";
 import { screenToText } from "./dataModel.js";
+import { derivedTools, withConditions } from "./journeyProfiles.js";
 import { callJson } from "./gemini.js";
 import { models } from "./models.js";
 
@@ -79,7 +80,8 @@ Intents (pick exactly one): ${INTENTS.join(", ")}.
 - seats / extras / passengers: those booking steps. pay: the user wants to proceed to payment / review the price (e.g. taps Continue / Checkout). confirm: the user commits to pay/book a fare that is already chosen (e.g. taps Pay, Book now, Confirm booking on a payment or summary screen).
 - question: a question that doesn't change the search. other: none of these.
 Tool: searchFares(constraints). Constraint keys: destination (IATA), month ("YYYY-MM"), date ("YYYY-MM-DD"), departAfter / departBefore ("HH:MM", 24h), maxStops (number), maxPricePerPax (number), sort ("price"|"depart"|"duration").
-Return JSON: {"intent":"<one intent>","refine":{<only constraint keys that change, or {} >},"selectFlightId":"<flight id from the fares shown, if the user picked one, else null>","reason":"<short>"}`;
+To drop a constraint (e.g. "without the cap", "any time"), set that key to null in refine; destination can't be dropped.
+Return JSON: {"intent":"<one intent>","refine":{<only constraint keys that change (null = remove), or {} >},"selectFlightId":"<flight id from the fares shown, if the user picked one, else null>","reason":"<short>"}`;
 
 export interface PlanInput {
   query: Query;
@@ -91,6 +93,8 @@ export interface PlanInput {
   /** Every fare the tool has returned in this journey so far (for resolving picks). */
   seenFares: Fare[];
   carry: Record<string, unknown>;
+  /** gen-v2: enrich fares with conditions and add the profile's derived tool entries (cheapest by day, nonstop). */
+  profileAware?: boolean;
 }
 
 export interface PlanResult {
@@ -104,6 +108,13 @@ export interface PlanResult {
 
 const REFINE_KEYS = ["destination", "month", "date", "departAfter", "departBefore", "maxStops", "maxPricePerPax", "sort"] as const;
 const HHMM = /^\d{2}:\d{2}$/;
+
+/** Keys the planner asked to drop (null in refine). */
+function removedKeys(raw: unknown): (typeof REFINE_KEYS)[number][] {
+  if (!raw || typeof raw !== "object") return [];
+  const r = raw as Record<string, unknown>;
+  return REFINE_KEYS.filter((k) => k !== "destination" && k in r && r[k] === null);
+}
 
 function cleanRefine(raw: unknown): Partial<FareConstraints> {
   const out: Partial<FareConstraints> = {};
@@ -180,6 +191,7 @@ export async function planTurn(input: PlanInput, journeyId: string, call: JsonCa
 
   // Turn 0 searches with the query's machine-readable constraints (the oracle's parse), not a re-parse.
   const refine = turnIndex === 0 ? {} : cleanRefine(d.refine);
+  const removed = turnIndex === 0 ? [] : removedKeys(d.refine).filter((k) => input.constraints[k] !== undefined);
   let constraints = input.constraints;
   let nextCarry = { ...carry };
   const toolResults: ToolResult[] = [];
@@ -194,18 +206,26 @@ export async function planTurn(input: PlanInput, journeyId: string, call: JsonCa
   const search = () => {
     const fares = searchFares(constraints, ctx);
     toolResults.push({ tool: "searchFares", args: { ...constraints }, fares });
+    if (input.profileAware) toolResults.push(...derivedTools(persona.id, constraints, ctx));
   };
 
-  if (turnIndex === 0 || Object.keys(refine).length) {
+  if (turnIndex === 0 || Object.keys(refine).length || removed.length) {
     constraints = { ...constraints, ...refine };
+    for (const k of removed) delete constraints[k];
     search();
-    if (intent === "select" && !picked) intent = Object.keys(refine).length ? "refine" : "search";
+    if (intent === "select" && !picked) intent = Object.keys(refine).length || removed.length ? "refine" : "search";
   } else if (picked) {
     toolResults.push({ tool: "getFare", args: { flightId: picked.flightId, date: picked.date }, fares: [picked] });
   } else if (SEARCHING.includes(intent) || !nextCarry.flightId) {
     search();
   }
 
+  // gen-v2 screens need the chosen fare's conditions (bags, flexibility, perks) on every booking step.
+  if (input.profileAware && !toolResults.length && typeof nextCarry.flightId === "string") {
+    const chosen = byId(nextCarry.flightId);
+    if (chosen) toolResults.push({ tool: "getFare", args: { flightId: chosen.flightId, date: chosen.date }, fares: [chosen] });
+  }
   if (intent === "confirm") nextCarry.bookingRef = bookingRef(`${journeyId}:${nextCarry.flightId}`);
-  return { intent, constraints, toolResults, carry: nextCarry, ms: r.ms, model: r.model };
+  const results = input.profileAware ? toolResults.map((t) => ({ ...t, fares: t.fares.map(withConditions) })) : toolResults;
+  return { intent, constraints, toolResults: results, carry: nextCarry, ms: r.ms, model: r.model };
 }

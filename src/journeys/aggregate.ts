@@ -1,19 +1,29 @@
 // Aggregation: suite summary, the derived intent graph (decision tree as output) and the query × persona matrix.
 import type { CheckKind, Intent, Journey, Persona, Query, SuiteSummary, Turn } from "./types.js";
 
-const turnFails = (t: Turn) => (t.checks ?? []).some((c) => !c.ok);
+// Correctness (grounding, carry, goal, schema) decides pass/fail. Persona contracts are tracked separately
+// (servesRate), so a screen that is correct but doesn't serve the person reads as "correct, not serving".
+const turnFails = (t: Turn) => (t.checks ?? []).some((c) => !c.ok && c.kind !== "persona");
 const journeyFails = (j: Journey) => j.turns.some(turnFails);
 const share = (n: number, d: number) => (d ? n / d : 0);
 
 export function summarize(journeys: Journey[]): SuiteSummary {
-  const failingChecks: Record<CheckKind, number> = { grounding: 0, carry: 0, goal: 0, schema: 0 };
+  const failingChecks: Record<CheckKind, number> = { grounding: 0, carry: 0, goal: 0, schema: 0, persona: 0 };
   let turns = 0;
   let pinned = 0;
+  let personaChecks = 0;
+  let personaOk = 0;
   for (const j of journeys) {
     for (const t of j.turns) {
       turns++;
       if (t.ingredients?.pinned) pinned++;
-      for (const c of t.checks ?? []) if (!c.ok) failingChecks[c.kind]++;
+      for (const c of t.checks ?? []) {
+        if (!c.ok) failingChecks[c.kind] = (failingChecks[c.kind] ?? 0) + 1;
+        if (c.kind === "persona") {
+          personaChecks++;
+          if (c.ok) personaOk++;
+        }
+      }
     }
   }
   return {
@@ -23,6 +33,7 @@ export function summarize(journeys: Journey[]): SuiteSummary {
     bookedRate: share(journeys.filter((j) => j.outcome === "booked").length, journeys.length),
     pinnedShare: share(pinned, turns),
     failingChecks,
+    ...(personaChecks ? { servesRate: share(personaOk, personaChecks), personaChecks } : {}),
   };
 }
 

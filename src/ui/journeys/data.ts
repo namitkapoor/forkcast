@@ -1,4 +1,4 @@
-import type { CheckResult, Journey, JourneysFile, Persona, Query, Turn } from "../../journeys/types";
+import type { CheckResult, Journey, JourneysFile, Persona, PersonaContract, Query, Turn } from "../../journeys/types";
 import { bestFare } from "../../domains/flights/fares";
 import { PERSONAS } from "../../journeys/fixtures";
 
@@ -25,7 +25,7 @@ function withPeople(f: JourneysFile): JourneysFile {
     ...f,
     personas: f.personas.map((p) => {
       const fx = byId.get(p.id);
-      return { ...p, name: p.name ?? fx?.name, photo: p.photo ?? fx?.photo, memory: fx?.memory ?? p.memory };
+      return { ...p, name: p.name ?? fx?.name, photo: p.photo ?? fx?.photo, memory: fx?.memory ?? p.memory, contracts: p.contracts ?? fx?.contracts };
     }),
   };
 }
@@ -51,6 +51,20 @@ export function loadHeroJourneys(): Promise<JourneysFile | null> {
   return heroPending;
 }
 
+let naivePending: Promise<JourneysFile | null> | null = null;
+
+/** The naive-prompt baseline run (gen-v0), for the hero's "Naive prompt" view. */
+export function loadNaiveJourneys(): Promise<JourneysFile | null> {
+  naivePending ??= tryLoad("/data/journeys.baseline.json").then((f) => (f && f.journeys.length ? withPeople(f) : null));
+  return naivePending;
+}
+
+export type HeroMode = "naive" | "checked";
+
+/** Share of journeys with at least one made-up (ungrounded) fact. */
+export const inventedShare = (f: JourneysFile) =>
+  f.journeys.length ? f.journeys.filter((j) => j.turns.some((t) => t.checks.some((c) => c.kind === "grounding" && !c.ok))).length / f.journeys.length : 0;
+
 /** "18 journeys · 3 questions × 3 travelers" for the top bar. */
 export function suiteStats(f: JourneysFile): string {
   return `${f.journeys.length} journeys · ${f.queries.length} questions × ${f.personas.length} travelers`;
@@ -70,7 +84,35 @@ export const shortPersona = (p: Persona | undefined) => (p ? (p.name ?? p.label.
 /** Compact name for tight spots (intent-tree lanes): "Okafor family". */
 export const laneName = (p: Persona | undefined) => shortPersona(p).replace(/^The /, "");
 export const isTap = (msg: string) => /^Tapped\s/i.test(msg);
-export const turnOk = (t: Turn) => t.checks.every((c) => c.ok);
+/** Correctness only (grounding, carry, goal, schema). Persona contracts are shown separately, in amber. */
+export const turnOk = (t: Turn) => t.checks.every((c) => c.ok || c.kind === "persona");
+export const personaChecks = (t: Turn | undefined) => (t?.checks ?? []).filter((c) => c.kind === "persona");
+
+/** One color per persona, used for the avatar ring, hero paths in the intent tree and the moving dot. */
+export const PERSONA_COLORS: Record<string, string> = { family: "#e8833a", solo: "#3b82f6", "budget-couple": "#22a06b" };
+const FALLBACK_COLORS = ["#e8833a", "#3b82f6", "#22a06b", "#a855f7", "#e5484d"];
+export const personaColor = (id: string, i = 0) => PERSONA_COLORS[id] ?? FALLBACK_COLORS[i % FALLBACK_COLORS.length];
+
+/** The journey the hero shows for (query, persona): the lowest run. */
+export function pickJourney(all: Journey[], queryId: string, personaId: string): Journey | undefined {
+  return all.filter((j) => j.queryId === queryId && j.personaId === personaId).sort((a, b) => a.run - b.run)[0];
+}
+
+/** The persona's contracts for this turn's intent, each with its check (if one ran on this screen). */
+export function contractStatus(p: Persona | undefined, t: Turn | undefined): { contract: PersonaContract; check?: CheckResult }[] {
+  if (!p || !t) return [];
+  const checks = personaChecks(t);
+  return (p.contracts ?? [])
+    .filter((c) => c.appliesTo.includes(t.intent))
+    .map((contract) => ({ contract, check: checks.find((c) => c.contractId === contract.id || c.message.replace(/^\[judge\]\s*/, "").startsWith(`${contract.label}: `)) }));
+}
+
+/** "Seat-together status is shown: No seat…" → the reason after the label. */
+export const checkReason = (c: CheckResult) => {
+  const m = c.message.replace(/^\[judge\]\s*/, "");
+  const i = m.indexOf(": "); // labels can hold "07:00", so split on colon + space
+  return i >= 0 ? m.slice(i + 2) : m;
+};
 export const journeyOk = (j: Journey) => j.turns.every(turnOk);
 export const tone = (rate: number) => (rate >= 0.8 ? "good" : rate >= 0.5 ? "warn" : "bad");
 export const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);

@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Journey, JourneysFile } from "../../journeys/types";
 import { CircledScreen } from "./CircledScreen";
 import { extractFacts } from "./agg";
-import { cap, day, goalVerdict, money, shortPersona, turnOk } from "./data";
+import { cap, checkReason, contractStatus, day, goalVerdict, money, shortPersona, turnOk } from "./data";
+import { decisionMarks, decisionsOf, humanize, SOURCE_LABEL } from "./why";
+import type { CheckResult } from "../../journeys/types";
 import { IconCheck, IconX } from "../icons";
 import { IconLock } from "./icons";
 
@@ -43,6 +45,7 @@ export function JourneyView({ file, journey: j, turn, onTurn }: Props) {
   const t = j.turns[Math.min(turn, j.turns.length - 1)];
   const verdict = goalVerdict(j, q, p);
   const failing = t ? t.checks.filter((c) => !c.ok) : [];
+  const [hl, setHl] = useState<string | null>(null);
   const onScreen = useMemo(() => {
     if (!t) return new Set<string>();
     const fs = extractFacts(t.screen).map((f) => f.value);
@@ -184,19 +187,66 @@ export function JourneyView({ file, journey: j, turn, onTurn }: Props) {
           <h3 className="jr-col__h">
             Screen <span className="muted">· {t.screen.variant}</span>
           </h3>
-          <CircledScreen screen={t.screen} width={screenW} mode="live" failing={failing} />
-          {t.screen.rationale && <p className="muted small jr-rationale">{t.screen.rationale}</p>}
+          <CircledScreen screen={t.screen} width={screenW} mode="live" failing={failing} marks={decisionMarks(t.screen)} highlight={hl} />
+          {t.screen.rationale && (
+            <p className="small jr-rationale">
+              <span className="jr-why__h">Why it looks like this</span> {t.screen.rationale}
+            </p>
+          )}
+          {decisionsOf(t.screen).length > 0 && (
+            <ol className="hero-legend jr-legend" data-legend>
+              {decisionsOf(t.screen).map((d, i) => (
+                <li key={`${d.componentId}-${i}`} tabIndex={0} onMouseEnter={() => setHl(d.componentId)} onMouseLeave={() => setHl(null)} onFocus={() => setHl(d.componentId)} onBlur={() => setHl(null)}>
+                  <span className={`jr-mark jr-mark--${d.source} jr-mark--static`}>{i + 1}</span>
+                  <b>{cap(humanize(d.componentId) || d.componentId)}</b>
+                  <span className="hero-legend__src">
+                    ← {SOURCE_LABEL[d.source] ?? d.source}: {d.because}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+          <h4 className="jr-checks__group">Correctness</h4>
           <ul className="jr-checks">
-            {t.checks.map((c, i) => (
-              <li key={i} className={c.ok ? "is-ok" : "is-bad"} data-check={c.kind}>
-                {c.ok ? <IconCheck width={13} height={13} /> : <IconX width={13} height={13} />}
-                <span className="jr-checks__kind">{c.kind}</span>
-                <span>{c.message}</span>
-              </li>
+            {t.checks.filter((c) => c.kind !== "persona").map((c, i) => (
+              <CheckRow key={i} c={c} />
             ))}
           </ul>
+          {contractStatus(p, t).length > 0 && (
+            <>
+              <h4 className="jr-checks__group" data-group="persona">
+                Persona contract <span className="muted">· does this screen serve {shortPersona(p).replace(/^The /, "")}?</span>
+              </h4>
+              <ul className="jr-checks jr-checks--persona">
+                {contractStatus(p, t).map(({ contract, check }) =>
+                  check ? (
+                    <CheckRow key={contract.id} c={check} label={contract.label} />
+                  ) : (
+                    <li key={contract.id} className="is-na" data-check="persona">
+                      <span className="jr-checks__na">–</span>
+                      <span className="jr-checks__kind">{contract.kind}</span>
+                      <span>
+                        {contract.label}: <span className="muted">{contract.kind === "judge" ? "not judged yet (npm run judge:personas)" : "nothing on this screen to check"}</span>
+                      </span>
+                    </li>
+                  ),
+                )}
+              </ul>
+            </>
+          )}
         </section>
       </div>
     </div>
+  );
+}
+
+function CheckRow({ c, label }: { c: CheckResult; label?: string }) {
+  const persona = c.kind === "persona";
+  return (
+    <li className={c.ok ? "is-ok" : persona ? "is-warn" : "is-bad"} data-check={c.kind}>
+      {c.ok ? <IconCheck width={13} height={13} /> : <IconX width={13} height={13} />}
+      <span className="jr-checks__kind">{persona ? (c.source ?? "rule") : c.kind}</span>
+      <span>{persona && label ? (<><b>{label}</b>: {checkReason(c)}</>) : c.message}</span>
+    </li>
   );
 }

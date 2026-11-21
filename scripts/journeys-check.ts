@@ -1,11 +1,15 @@
 // Unit-style checks for src/journeys/{checks,aggregate,converge}, plus extraction coverage over real screens.
 // Usage: npm run check:journeys
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { A2UI_VERSION, BASIC_CATALOG_ID, type Screen } from "../src/a2ui/types.js";
 import { bestFare, searchFares } from "../src/domains/flights/fares.js";
 import { buildIntentGraph, matrix, summarize } from "../src/journeys/aggregate.js";
 import { checkJourneyGoal, checkTurn, extractFacts } from "../src/journeys/checks.js";
 import { choosePins } from "../src/journeys/converge.js";
+import { checkPersonaRules, fareUnits } from "../src/journeys/personaContracts.js";
+import { judgeOne, newStats, rejudgeJourneys, type JudgeCall } from "./judge-core.js";
 import { PERSONAS, QUERIES } from "../src/journeys/fixtures.js";
 import type { Intent, Journey, JourneysFile, Persona, Query, Turn } from "../src/journeys/types.js";
 
@@ -212,6 +216,133 @@ const journey = (turns: Turn[], outcome: Journey["outcome"], personaId = "family
   const m = matrix([good, badJ], QUERIES, PERSONAS);
   const cell = m.find((r) => r.queryId === hero.id && r.personaId === "family");
   assert(m.length === 9 && cell?.runs === 2 && cell.booked === 1, "matrix", cell);
+}
+
+// --- persona contracts: rule pass/fail per persona
+{
+  const budgetCouple = PERSONAS.find((p) => p.id === "budget-couple")!;
+  type Row = { flight?: string; times?: string; stops?: string; price: string };
+  // One Card per fare with literal Texts; ids: f{i}_id, f{i}_times, f{i}_price.
+  const fareList = (rows: Row[], header = "Lisbon · March") =>
+    screen([
+      { id: "root", component: "Column", children: ["hdr", ...rows.map((_, i) => `f${i}`)] },
+      { id: "hdr", component: "Text", text: header },
+      ...rows.flatMap((r, i) => [
+        { id: `f${i}`, component: "Card", child: `f${i}_col` },
+        { id: `f${i}_col`, component: "Column", children: [`f${i}_id`, `f${i}_times`, `f${i}_price`] },
+        { id: `f${i}_id`, component: "Text", text: r.flight ?? "" },
+        { id: `f${i}_times`, component: "Text", text: [r.times, r.stops].filter(Boolean).join(" · ") },
+        { id: `f${i}_price`, component: "Text", text: r.price },
+      ]),
+    ]);
+  const rules = (p: Persona, intent: Intent, s: Screen, fs: typeof fares, carry: Record<string, unknown> = {}) =>
+    checkPersonaRules({ ...turn(0, intent, s, { fares: fs, persona: p, carry }), userMessage: "Cheapest morning flight to Lisbon" }, p);
+  const one = (rs: ReturnType<typeof rules>, id: string) => rs.find((r) => r.contractId === id);
+
+  // Family: totals for 4, no very-early first.
+  const famF = searchFares(hero.constraints, ctxOf(family));
+  const ib = famF.find((f) => f.flightId === "IB4610")!;
+  const u2 = famF.find((f) => f.flightId === "U25369")!;
+  const famOk = rules(family, "search", fareList([
+    { flight: ib.flightId, times: `${ib.depart} – ${ib.arrive}`, price: `€${ib.total} total` },
+    { flight: u2.flightId, times: `${u2.depart} – ${u2.arrive}`, price: `€${u2.total} total` },
+  ]), famF);
+  assert(one(famOk, "family-total-for-4")?.ok && one(famOk, "family-no-early-first")?.ok, "persona/family: totals + 07:10 first pass", famOk);
+  assert(!famOk.some((r) => r.contractId === "family-seats-together"), "persona: judge contracts are not run offline", famOk);
+  const famBad = rules(family, "search", fareList([
+    { flight: u2.flightId, times: `${u2.depart} – ${u2.arrive}`, price: `€${u2.pricePerPax}` },
+    { flight: ib.flightId, times: `${ib.depart} – ${ib.arrive}`, price: `€${ib.pricePerPax} / person` },
+  ]), famF);
+  const tot = one(famBad, "family-total-for-4");
+  assert(tot && !tot.ok && tot.componentId === "f0_price" && tot.kind === "persona", "persona/family: per-person price fails on its component", tot);
+  const early = one(famBad, "family-no-early-first");
+  assert(early && !early.ok && early.componentId === "f0_id" && early.value === "06:05", "persona/family: 06:05 ranked first fails", early);
+  const famMention = rules(family, "select", fareList([{ flight: ib.flightId, times: `${ib.depart} – ${ib.arrive}`, price: `€${ib.pricePerPax} pp · 4 travelers` }]), famF);
+  assert(one(famMention, "family-total-for-4")?.ok, "persona/family: '4 travelers' next to the price passes", famMention);
+  assert(rules(family, "confirm", fareList([{ flight: ib.flightId, price: `€${ib.pricePerPax}` }]), famF).length === 0, "persona: contracts only run on their intents");
+
+  // Solo (Maya): stops labeled, arrival shown, nonstop above similar 1-stop.
+  const soloF = searchFares(hero.constraints, ctxOf(solo));
+  const [ua, , ib7] = soloF; // UA2681 1 stop $293, IB7362 1 stop $366
+  const ba = soloF.find((f) => f.stops === 0 && f.pricePerPax <= ib7.pricePerPax * 1.15)!; // BA8578 nonstop $374
+  const soloOk = rules(solo, "search", fareList([
+    { flight: ba.flightId, times: `${ba.depart} – ${ba.arrive}`, stops: "Nonstop", price: `$${ba.total}` },
+    { flight: ua.flightId, times: `${ua.depart} – ${ua.arrive}`, stops: "1 stop", price: `$${ua.total}` },
+  ]), soloF);
+  assert(["solo-stops-labeled", "solo-arrival-shown", "solo-nonstop-first"].every((id) => one(soloOk, id)?.ok), "persona/solo: labeled, arrivals, nonstop first pass", soloOk);
+  const soloBad = rules(solo, "search", fareList([
+    { flight: ib7.flightId, times: `${ib7.depart} – ${ib7.arrive}`, stops: "1 stop", price: `$${ib7.total}` },
+    { flight: ba.flightId, times: `departs ${ba.depart}`, price: `$${ba.total}` },
+  ]), soloF);
+  const lab = one(soloBad, "solo-stops-labeled");
+  assert(lab && !lab.ok && lab.componentId === "f1_id", "persona/solo: unlabeled stops fail on that fare", lab);
+  const arr = one(soloBad, "solo-arrival-shown");
+  assert(arr && !arr.ok && arr.componentId === "f1_id", "persona/solo: missing arrival fails", arr);
+  const ns = one(soloBad, "solo-nonstop-first");
+  assert(ns && !ns.ok && ns.componentId === "f0_id" && /ranks above nonstop/.test(ns.message), "persona/solo: 1-stop above nonstop within 15% fails", ns);
+  const soloSummary = rules(solo, "search", screen([
+    { id: "root", component: "Column", children: ["card", "sum"] },
+    { id: "card", component: "Card", child: "c" },
+    { id: "c", component: "Text", text: `${ua.flightId} · ${ua.depart} – ${ua.arrive} · 1 stop · $${ua.total}` },
+    { id: "sum", component: "Text", text: `Best match: ${ua.flightId} ($${ua.total})` },
+  ]), soloF);
+  assert(one(soloSummary, "solo-stops-labeled")?.ok, "persona/solo: a summary line re-mentioning a full card is fine", soloSummary);
+  const units = fareUnits(resultsScreen(), "EUR");
+  assert(units.length === 2 && units[0].key.startsWith("card@/fares/0"), "persona: fare units follow list templates", units.map((u) => u.key));
+
+  // Budget couple: true total, budget echo is not a fare price.
+  const bF = searchFares(hero.constraints, ctxOf(budgetCouple));
+  const fr = bF.find((f) => f.flightId === "FR9164")!;
+  const bOk = rules(budgetCouple, "select", fareList([{ flight: fr.flightId, times: `${fr.depart} – ${fr.arrive}`, price: `£${fr.pricePerPax} each · £${fr.total} total` }], "Under £100 per person"), bF);
+  assert(one(bOk, "budget-true-total")?.ok, "persona/budget: total shown passes", bOk);
+  const bBad = rules(budgetCouple, "search", fareList([{ flight: fr.flightId, times: `${fr.depart} – ${fr.arrive}`, price: `£${fr.pricePerPax} pp · 2 travelers` }]), bF);
+  const bt = one(bBad, "budget-true-total");
+  assert(bt && !bt.ok && bt.componentId === "f0_price", "persona/budget: per-person only fails (pax mention isn't a total)", bt);
+
+  // checkTurn wires rule contracts in for the persona's intents.
+  const wired = withChecks(turn(0, "search", resultsScreen(), { fares }));
+  assert(wired.checks.some((c) => c.kind === "persona" && c.contractId === "family-total-for-4" && c.ok), "persona: checkTurn includes rule contracts", wired.checks);
+  const s = summarize([journey([{ ...wired, checks: [...wired.checks, { kind: "persona", ok: false, message: "x", contractId: "family-seats-together" }] }], "booked")]);
+  assert(s.passRate === 1 && s.failingChecks.persona === 1 && s.servesRate !== undefined && s.servesRate < 1, "persona: summary tracks serves separately from pass", s);
+}
+
+// --- persona contracts: judge path with a mocked model and the hash cache (no network)
+{
+  const dir = mkdtempSync(path.join(tmpdir(), "judge-"));
+  try {
+    let calls = 0;
+    const mock: JudgeCall = async (system, prompt) => {
+      calls++;
+      assert(/Seat-together status is shown/.test(prompt) && / \(Text\): /.test(prompt) && /componentId/.test(system), "judge: prompt carries contract + digest", prompt.slice(0, 400));
+      return { data: { pass: false, reason: "No seat-together status anywhere.", componentId: "title" }, info: { model: "mock", ms: 5, inputTokens: 100, outputTokens: 20 } };
+    };
+    const seats = family.contracts!.find((c) => c.id === "family-seats-together")!;
+    const t = turn(0, "search", resultsScreen(), { fares });
+    const stats = newStats();
+    const r1 = await judgeOne(t, family, seats, { call: mock, cacheDir: dir, stats });
+    assert(r1 && !r1.ok && r1.kind === "persona" && r1.source === "judge" && r1.componentId === "title" && r1.message === "[judge] Seat-together status is shown: No seat-together status anywhere.", "judge: verdict becomes a persona check", r1);
+    assert(calls === 1 && readdirSync(dir).length === 1 && stats.calls === 1, "judge: one call, one cache file", { calls, stats });
+    const never: JudgeCall = async () => {
+      throw new Error("network used despite cache");
+    };
+    const r2 = await judgeOne(t, family, seats, { call: never, cacheDir: dir, stats });
+    assert(JSON.stringify(r2) === JSON.stringify(r1) && stats.cached === 1, "judge: second run served from cache", { r2, stats });
+    const r3 = await judgeOne({ ...t, userMessage: "different" }, family, seats, { call: never, cacheDir: dir, stats, network: false });
+    assert(r3 === null, "judge: cache miss with network off is skipped", r3);
+    const bogus: JudgeCall = async () => ({ data: { pass: false, reason: "x", componentId: "nope" }, info: { model: "mock", ms: 1 } });
+    const r4 = await judgeOne({ ...t, userMessage: "other" }, family, seats, { call: bogus, cacheDir: dir });
+    assert(r4 && r4.componentId === undefined, "judge: unknown componentId dropped", r4);
+
+    // rejudgeJourneys is idempotent: persona checks are replaced, not appended.
+    const j = journey([withChecks(turn(0, "search", resultsScreen(), { fares })), t1], "booked");
+    const once = await rejudgeJourneys([j], QUERIES, PERSONAS, { call: mock, cacheDir: dir });
+    const twice = await rejudgeJourneys(once, QUERIES, PERSONAS, { call: never, cacheDir: dir });
+    const count = (js: Journey[]) => js[0].turns.flatMap((x) => x.checks.filter((c) => c.kind === "persona")).length;
+    assert(count(once) > 0 && count(once) === count(twice), "judge: rejudge is idempotent", { a: count(once), b: count(twice) });
+    assert(twice[0].turns[0].checks.some((c) => c.source === "judge") && twice[0].turns[1].checks.filter((c) => c.kind === "goal").length === 1, "judge: judge checks + one goal check", twice[0].turns.map((x) => x.checks.map((c) => c.kind)));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 console.log(`\nasserts: ${passed} passed, ${failed} failed`);
