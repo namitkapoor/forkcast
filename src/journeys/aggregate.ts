@@ -64,6 +64,8 @@ export function buildIntentGraph(journeys: Journey[], personas: Persona[]): Inte
     edges.set(k, e);
   };
 
+  // The tree reports persona fit: a turn "fails" when a persona contract fails for that traveler.
+  const misfit = (t: Turn) => t.checks.some((c) => c.kind === "persona" && !c.ok);
   let seq = 0;
   for (const j of journeys) {
     let prev: Intent | "start" = "start";
@@ -72,12 +74,12 @@ export function buildIntentGraph(journeys: Journey[], personas: Persona[]): Inte
       n.count++;
       const lane = n.lanes.get(j.personaId) ?? { count: 0, pass: 0, screenIds: [], pinned: false };
       lane.count++;
-      if (!turnFails(t)) lane.pass++;
+      if (!misfit(t)) lane.pass++;
       if (t.screen?.id && !lane.screenIds.includes(t.screen.id)) lane.screenIds.push(t.screen.id);
       if (t.ingredients?.pinned) lane.pinned = true;
       n.lanes.set(j.personaId, lane);
       nodes.set(t.intent, n);
-      bump(prev, t.intent, turnFails(t));
+      bump(prev, t.intent, misfit(t));
       prev = t.intent;
     }
     if (j.turns.length) bump(prev, "end", !j.goalMet);

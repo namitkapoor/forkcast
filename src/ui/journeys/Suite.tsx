@@ -87,7 +87,7 @@ export function Suite({ file, heroFile, mode, onMode, queryId, turn, onQuery, on
         <header className="jr-card__head">
           <h2>The flow people actually took</h2>
           <span className="muted small">
-            Built from {file.journeys.length} journeys ({turns} turns). Each box is what people were trying to do, with each traveler’s pass rate.
+            Built from {file.journeys.length} journeys ({turns} turns). Each box is what people were trying to do. Numbers = how many reached it; % = screens that fit that traveler.
           </span>
         </header>
         <ol className="it-steps" aria-label="How the flow is built">
