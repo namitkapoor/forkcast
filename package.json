@@ -9,7 +9,9 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "check": "tsx scripts/check.ts",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "simulate:llm": "tsx scripts/simulate-llm.ts",
+    "typecheck:api": "tsc --noEmit -p api"
   },
   "dependencies": {
     "@a2ui/react": "^0.15.0",
