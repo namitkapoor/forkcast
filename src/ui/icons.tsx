@@ -65,3 +65,57 @@ export const IconAlert = base(
     <path d="M12 10v4M12 17v.1" />
   </>,
 );
+export const IconPerson = base(
+  <>
+    <circle cx="12" cy="8" r="3.6" />
+    <path d="M5 20c.6-3.6 3.4-5.6 7-5.6s6.4 2 7 5.6" />
+  </>,
+);
+export const IconDevice = base(
+  <>
+    <rect x="6.5" y="3" width="11" height="18" rx="2.5" />
+    <path d="M10.5 18h3" />
+  </>,
+);
+export const IconLasso = base(
+  <>
+    <path d="M7.5 16.5C4.6 15.3 3 13.4 3 11.2 3 7.2 7 4 12 4s9 3.2 9 7.2-4 7.2-9 7.2c-.9 0-1.8-.1-2.6-.3" strokeDasharray="2.2 2.4" />
+    <path d="M9 15.5c0 1.5-1 2.5-2.2 2.5S5 19.2 5.6 20.5" />
+  </>,
+);
+export const IconComment = base(<path d="M5 5h14a1 1 0 011 1v10a1 1 0 01-1 1h-8l-4.5 3.5V17H5a1 1 0 01-1-1V6a1 1 0 011-1z" />);
+export const IconUndo = base(<path d="M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 010 11H11" />);
+export const IconRedo = base(<path d="M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 000 11H13" />);
+export const IconChat = base(<path d="M4 12a8 8 0 1114.9 4L20 20l-4-1.1A8 8 0 014 12z" />);
+export const IconLayers = base(<path d="M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5M3 17l9 5 9-5" />);
+export const IconSend = base(<path d="M12 19V5M5.5 11.5L12 5l6.5 6.5" />);
+export const IconFlag = base(<path d="M5 21V4m0 0h11l-2 4 2 4H5" />);
+export const IconCheck = base(<path d="M5 12.5l4.5 4.5L19 7.5" />);
+export const IconText = base(<path d="M5 6h14M12 6v13" />);
+export const IconBox = base(<rect x="4" y="5" width="16" height="14" rx="2.5" />);
+export const IconRows = base(<path d="M4 6h16M4 12h16M4 18h16" />);
+export const IconCols = base(<path d="M6 4v16M12 4v16M18 4v16" />);
+export const IconButton = base(
+  <>
+    <rect x="3" y="7.5" width="18" height="9" rx="4.5" />
+    <path d="M9 12h6" />
+  </>,
+);
+export const IconImage = base(
+  <>
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
+    <path d="M3.5 16l5-5 4 4 3-3 5 5" />
+  </>,
+);
+export const IconInput = base(
+  <>
+    <rect x="3" y="6.5" width="18" height="11" rx="2.5" />
+    <path d="M7 10v4" />
+  </>,
+);
+export const IconStep = base(
+  <>
+    <rect x="4" y="3.5" width="7" height="17" rx="2" />
+    <rect x="13" y="3.5" width="7" height="17" rx="2" />
+  </>,
+);

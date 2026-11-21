@@ -45,6 +45,44 @@ export interface SimulateStepResponse {
   reason: string;
 }
 
+export interface EditScreenRequest {
+  /** The version being edited (its messages are the starting point). */
+  screen: Screen;
+  /** Components the user lassoed; empty = the instruction applies to the whole screen. */
+  componentIds: string[];
+  /** What to change, e.g. "make the total bigger and show per-traveler price". */
+  instruction: string;
+}
+
+export interface EditScreenResponse {
+  /** The revised screen: same id, nodeId and context as the request; the client re-ids it as a version. */
+  screen: Screen;
+  /** One line on what changed, for the chat. */
+  summary: string;
+  /** Component ids that were added, removed or changed. */
+  changed: string[];
+  /** Guardrail notes left after repair (e.g. a carried value moved). */
+  warnings: string[];
+  attempts: { model: string; ms: number; ok: boolean; error?: string }[];
+}
+
+export interface AskRequest {
+  question: string;
+  /** Human summary of what is selected, e.g. "State: Payment (payment)" or "Whole run". */
+  selection: string;
+  stats: { sessions: number; completedPct: number; failedChecks: number; edgesExercised: number; edgesTotal: number; edgesFor95: number };
+  failingEdges: { edge: string; count: number; example: string }[];
+  /** When a screen is selected, its messages, so answers can cite what it shows. */
+  screen?: { variant: string; messages: A2uiMessage[] };
+  /** Recent chat turns for follow-ups. */
+  history?: { role: "user" | "assistant"; text: string }[];
+}
+
+export interface AskResponse {
+  answer: string;
+  model: string;
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   const json = await res.json().catch(() => ({}));
@@ -55,3 +93,5 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 export const generateScreen = (req: GenerateScreenRequest) => post<{ screen: Screen }>("/api/generate-screen", req).then((r) => r.screen);
 export const branchFromScreen = (req: BranchRequest) => post<BranchResponse>("/api/branch", req);
 export const simulateStep = (req: SimulateStepRequest) => post<SimulateStepResponse>("/api/simulate-step", req);
+export const editScreen = (req: EditScreenRequest) => post<EditScreenResponse>("/api/edit-screen", req);
+export const askForkcast = (req: AskRequest) => post<AskResponse>("/api/ask", req);

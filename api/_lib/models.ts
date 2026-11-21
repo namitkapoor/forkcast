@@ -16,6 +16,14 @@ export const models = {
   get simulator() {
     return env("FORKCAST_MODEL_SIMULATOR", "gemini-3.5-flash-lite");
   },
+  /** Edits an existing screen from a chat instruction (falls back to generatorFallback). */
+  get editor() {
+    return env("FORKCAST_MODEL_EDITOR", "gemini-4-hydrogen");
+  },
+  /** Short answers about the run in the chat panel. */
+  get assistant() {
+    return env("FORKCAST_MODEL_ASSISTANT", "gemini-3.5-flash-lite");
+  },
   /** Optional judge (not used yet). */
   get judge() {
     return env("FORKCAST_MODEL_JUDGE", "gemini-4-neon");
@@ -27,5 +35,7 @@ export function modelSnapshot(): Record<string, string> {
     generator: models.generator,
     generatorFallback: models.generatorFallback,
     simulator: models.simulator,
+    editor: models.editor,
+    assistant: models.assistant,
   };
 }

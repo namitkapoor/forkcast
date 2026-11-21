@@ -1,35 +1,47 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { edgeKey, type FlowGraph, type Trace, type Transition } from "../graph/types";
+import { edgeKey, type FlowGraph, type Invariant, type Trace, type Transition } from "../graph/types";
 import type { FoldedGraph } from "../graph/fold";
-import type { CheckReport, Failure } from "../checks/run";
-import type { Coverage } from "../checks/coverage";
+import type { CheckReport } from "../checks/run";
 import type { Annotation, Screen } from "../a2ui/types";
-import type { Selection, Tool } from "../canvas/context";
-import type { Source } from "../canvas/model";
-import { IconAlert, IconBranch, IconChevron, IconPanel, IconSpark, IconX } from "./icons";
+import type { Picks, Selection, Tool } from "../canvas/context";
+import { componentBindings, getComponents, getDataModel, resolveText } from "../a2ui/tree";
+import { ScreenFrame } from "../a2ui/ScreenFrame";
+import { IconAlert, IconBranch, IconChevron, IconComment, IconLasso, IconPerson, IconSpark, IconX } from "./icons";
 
-export interface InspectorProps {
-  title: string;
-  source: Source;
-  hasRun: boolean;
+// Figma-style properties panel for whatever is selected: a picked component, a screen, a step
+// or a transition, plus session replay. Rendered in the right panel (desktop) or the left
+// sheet's Props tab (mobile).
+
+export interface Versions {
+  /** All versions of a base screen, original first. */
+  list: Screen[];
+  active: number;
+}
+
+export interface ReplayState {
+  traceId: string;
+  step: number;
+}
+
+export interface PropertiesProps {
   graph: FlowGraph;
   traces: Trace[];
   folded: FoldedGraph;
   report: CheckReport;
-  cov: Coverage;
+  invariants: Invariant[];
   screensByNode: Map<string, Screen[]>;
+  screenById: Map<string, Screen>;
   annotations: Record<string, Annotation[]>;
   selection: Selection;
+  picks: Picks | null;
   tool: Tool;
-  bug: boolean;
-  seed: number;
   branching: boolean;
   generating: boolean;
-  collapsed: boolean;
-  onToggleCollapsed: () => void;
-  onBug: (v: boolean) => void;
-  onRerun: () => void;
-  onSource: (s: Source) => void;
+  replay: ReplayState | null;
+  versionsOf: (baseId: string) => Versions;
+  shown: (screen: Screen) => Screen;
+  onSetVersion: (baseId: string, index: number) => void;
+  onReplay: (r: ReplayState | null) => void;
   onFocusNode: (id: string) => void;
   onFocusEdge: (key: string) => void;
   onSelectScreen: (id: string, nodeId: string) => void;
@@ -37,60 +49,70 @@ export interface InspectorProps {
   onBranch: (screen: Screen, utterance: string) => void;
   onGenerate: (nodeId: string) => void;
   onDeleteAnnotation: (screenId: string, id: string) => void;
+  onEditWithAI: () => void;
+  onFlagPicked: () => void;
+  onLasso: () => void;
+  onClearPicks: () => void;
 }
 
 const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0);
 
-export function Inspector(p: InspectorProps) {
+/** What the panel is about, for its header. Null = nothing to show. */
+export function propertiesTitle(p: PropertiesProps): { kind: string; title: string } | null {
+  if (p.replay) return { kind: "Replay", title: p.replay.traceId };
   const { selection } = p;
-  let body: React.ReactNode;
-  let heading: string;
   if (selection.kind === "screen") {
-    const screen = p.screensByNode.get(selection.nodeId)?.find((s) => s.id === selection.id);
-    heading = "Screen";
-    body = screen ? <ScreenView {...p} screen={screen} /> : <Summary {...p} />;
-  } else if (selection.kind === "node") {
-    heading = "State";
-    body = <NodeView {...p} nodeId={selection.id} />;
-  } else if (selection.kind === "edge") {
-    heading = "Transition";
-    body = <EdgeView {...p} edge={selection.key} />;
-  } else {
-    heading = "Run summary";
-    body = <Summary {...p} />;
+    if (p.picks?.screenId === selection.id && p.picks.items.length)
+      return p.picks.items.length === 1
+        ? { kind: p.picks.items[0].type, title: p.picks.items[0].id }
+        : { kind: "Components", title: `${p.picks.items.length} selected` };
+    const s = p.screenById.get(selection.id);
+    return { kind: "Screen", title: s ? p.shown(s).variant : selection.id };
   }
+  if (selection.kind === "node") return { kind: "Step", title: p.graph.nodes.find((n) => n.id === selection.id)?.label ?? selection.id };
+  if (selection.kind === "edge") {
+    const [a, b] = selection.key.split("->");
+    const l = (id: string) => p.graph.nodes.find((n) => n.id === id)?.label ?? id;
+    return { kind: "Transition", title: `${l(a)} → ${l(b)}` };
+  }
+  return null;
+}
 
+export function Properties(p: PropertiesProps) {
+  const { selection } = p;
+  if (p.replay) return <Replay {...p} replay={p.replay} />;
+  if (selection.kind === "screen") {
+    const screen = p.screenById.get(selection.id);
+    if (!screen) return <p className="muted">This screen no longer exists.</p>;
+    if (p.picks?.screenId === selection.id && p.picks.items.length) return <ComponentView {...p} screen={screen} picks={p.picks} />;
+    return <ScreenView {...p} screen={screen} />;
+  }
+  if (selection.kind === "node") return <NodeView {...p} nodeId={selection.id} />;
+  if (selection.kind === "edge") return <EdgeView {...p} edge={selection.key} />;
+  return null;
+}
+
+export function RightPanel(p: PropertiesProps) {
+  const head = propertiesTitle(p);
+  if (!head) return null;
   return (
-    <aside className={`inspector${p.collapsed ? " is-collapsed" : ""}`} aria-label="Inspector">
-      <header className="inspector__head">
-        <button className="icon-btn" onClick={p.onToggleCollapsed} aria-label={p.collapsed ? "Expand inspector" : "Collapse inspector"} title="Toggle inspector ( \\ )">
-          <IconPanel />
-        </button>
-        <div className="inspector__crumbs">
-          {selection.kind !== "none" ? (
-            <>
-              <button className="crumb" onClick={p.onClear}>
-                Summary
-              </button>
-              <IconChevron width={12} height={12} className="crumb__sep" />
-              <span className="crumb is-current">{heading}</span>
-            </>
-          ) : (
-            <span className="crumb is-current">{heading}</span>
-          )}
+    <aside className="rpanel floating" aria-label="Properties">
+      <header className="rpanel__head">
+        <div className="rpanel__title">
+          <span className="rpanel__kind">{head.kind}</span> {head.title}
         </div>
-        {selection.kind !== "none" && (
-          <button className="icon-btn" onClick={p.onClear} aria-label="Clear selection" title="Clear (Esc)">
-            <IconX />
-          </button>
-        )}
+        <button className="icon-btn icon-btn--sm" onClick={p.replay ? () => p.onReplay(null) : p.onClear} aria-label="Close" title="Close (Esc)">
+          <IconX width={13} height={13} />
+        </button>
       </header>
-      <div className="inspector__body">{body}</div>
+      <div className="rpanel__body">
+        <Properties {...p} />
+      </div>
     </aside>
   );
 }
 
-function Stat({ value, label, tone }: { value: React.ReactNode; label: string; tone?: "bad" | "ok" | "accent" }) {
+function Stat({ value, label, tone }: { value: React.ReactNode; label: string; tone?: "bad" | "ok" }) {
   return (
     <div className={`stat${tone ? ` stat--${tone}` : ""}`}>
       <div className="stat__value">{value}</div>
@@ -99,265 +121,180 @@ function Stat({ value, label, tone }: { value: React.ReactNode; label: string; t
   );
 }
 
-function Summary(p: InspectorProps) {
-  const completed = p.traces.filter((t) => t.outcome === "completed").length;
-  const groups = useMemo(() => groupFailures(p.report.failures), [p.report]);
-  const labelOf = useLabels(p.graph);
-  const covPct = pct(p.cov.edgesExercised, p.cov.edgesTotal);
-
-  return (
-    <>
-      <section className="block">
-        <div className="eyebrow">{p.source === "run" ? "Recorded run" : `Seeded simulation · seed ${p.seed}`}</div>
-        <div className="stats">
-          <Stat value={p.folded.traceCount.toLocaleString()} label="sessions" />
-          <Stat value={`${pct(completed, p.folded.traceCount)}%`} label="completed" tone="ok" />
-          <Stat value={p.report.failures.length.toLocaleString()} label="failed checks" tone={p.report.failures.length ? "bad" : undefined} />
-        </div>
-      </section>
-
-      <section className="block">
-        <h3>Coverage</h3>
-        <div className="meter" role="img" aria-label={`${covPct}% of transitions exercised`}>
-          <i style={{ width: `${covPct}%` }} />
-        </div>
-        <p className="lede">
-          <b>{p.cov.edgesExercised}</b> of {p.cov.edgesTotal} transitions exercised
-        </p>
-        <p className="lede">
-          95% of traffic runs over <b>{p.cov.edgesFor95}</b> transition{p.cov.edgesFor95 === 1 ? "" : "s"}
-        </p>
-        {p.cov.untested.length > 0 && (
-          <div className="chips">
-            {p.cov.untested.map((k) => (
-              <button key={k} className="chip chip--untested" onClick={() => p.onFocusEdge(k)}>
-                {edgeLabel(k, labelOf)}
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="block">
-        <h3>
-          Failures <span className="count">{groups.length}</span>
-        </h3>
-        {groups.length === 0 && <p className="muted">Every invariant and contract held on every step.</p>}
-        <ul className="fail-list">
-          {groups.map((g) => (
-            <li key={g.where}>
-              <button
-                className="fail"
-                onClick={() => (g.kind === "contract" ? p.onFocusEdge(g.where) : p.onFocusNode(g.where))}
-              >
-                <IconAlert className="fail__icon" />
-                <span className="fail__main">
-                  <span className="fail__where">{g.kind === "contract" ? edgeLabel(g.where, labelOf) : labelOf(g.where)}</span>
-                  <span className="fail__msg">{g.example}</span>
-                </span>
-                <span className="fail__count">{g.count}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section className="block">
-        <h3>Simulation</h3>
-        {p.hasRun && (
-          <div className="seg" role="radiogroup" aria-label="Data source">
-            {(["run", "sim"] as const).map((s) => (
-              <button key={s} role="radio" aria-checked={p.source === s} className={p.source === s ? "is-on" : ""} onClick={() => p.onSource(s)}>
-                {s === "run" ? "Recorded run" : "Seeded sim"}
-              </button>
-            ))}
-          </div>
-        )}
-        <label className="toggle">
-          <input type="checkbox" checked={p.bug} onChange={(e) => p.onBug(e.target.checked)} />
-          <span className="toggle__track" aria-hidden="true" />
-          <span>
-            Seed price-drift bug
-            <small>5% of passengers→payment hops add $37</small>
-          </span>
-        </label>
-        <button className="btn btn--block" onClick={p.onRerun}>
-          Re-run simulation
-          <span className="kbd">seed {p.seed + 1}</span>
-        </button>
-      </section>
-    </>
-  );
+function useLabels(graph: FlowGraph) {
+  return useMemo(() => {
+    const m = new Map(graph.nodes.map((n) => [n.id, n.label]));
+    return (id: string) => m.get(id) ?? id;
+  }, [graph]);
 }
 
-function NodeView(p: InspectorProps & { nodeId: string }) {
-  const node = p.graph.nodes.find((n) => n.id === p.nodeId);
-  const labelOf = useLabels(p.graph);
-  if (!node) return <p className="muted">This state no longer exists.</p>;
-  const stats = p.folded.nodeStats.get(node.id);
-  const screens = p.screensByNode.get(node.id) ?? [];
-  const incoming = p.graph.transitions.filter((t) => t.to === node.id);
-  const outgoing = p.graph.transitions.filter((t) => t.from === node.id);
-  const invFails = p.report.failures.filter((f) => f.kind === "invariant" && f.where === node.id);
-
-  return (
-    <>
-      <section className="block">
-        <div className="title-row">
-          <h2>{node.label}</h2>
-          {node.acts && <span className="badge badge--acts">commits</span>}
-        </div>
-        <div className="mono muted">
-          {node.component} · {node.stage}
-        </div>
-        <div className="stats">
-          <Stat value={`${pct(stats?.traces ?? 0, p.folded.traceCount)}%`} label="reach" />
-          <Stat value={(stats?.visits ?? 0).toLocaleString()} label="visits" />
-          <Stat value={`${pct(stats?.completions ?? 0, stats?.traces ?? 0)}%`} label="complete" tone="ok" />
-        </div>
-        {invFails.length > 0 && (
-          <div className="callout callout--bad">
-            <b>{invFails.length} invariant failures</b>
-            <span>{invFails[0].message}</span>
-          </div>
-        )}
-      </section>
-
-      <section className="block">
-        <h3>Contracts in</h3>
-        <EdgeList edges={incoming} side="from" {...p} labelOf={labelOf} />
-        <h3>Contracts out</h3>
-        <EdgeList edges={outgoing} side="to" {...p} labelOf={labelOf} />
-      </section>
-
-      <section className="block">
-        <h3>
-          Screens <span className="count">{screens.length}</span>
-        </h3>
-        {screens.length === 0 && <p className="muted">No renderings recorded for this state yet.</p>}
-        <ul className="screen-list">
-          {screens.map((s) => (
-            <li key={s.id}>
-              <button onClick={() => p.onSelectScreen(s.id, node.id)}>
-                <span className="screen-list__name">{s.variant}</span>
-                <span className="screen-list__ctx">{Object.values(s.context).join(" · ")}</span>
-                {(p.annotations[s.id]?.length ?? 0) > 0 && <span className="count">{p.annotations[s.id].length}</span>}
-              </button>
-            </li>
-          ))}
-        </ul>
-        <button className="btn btn--block" onClick={() => p.onGenerate(node.id)} disabled={p.generating}>
-          <IconSpark /> {p.generating ? "Generating…" : "Generate a screen for this state"}
-        </button>
-      </section>
-    </>
-  );
+/** Checks that apply to a node: its invariants and the contracts on its in/out edges, with failure counts. */
+function nodeChecks(p: PropertiesProps, nodeId: string) {
+  const node = p.graph.nodes.find((n) => n.id === nodeId);
+  const invs = p.invariants
+    .filter((i) => i.component === node?.component)
+    .map((i) => ({
+      key: i.id,
+      label: i.description,
+      where: "invariant",
+      fails: p.report.failures.filter((f) => f.kind === "invariant" && f.where === nodeId && f.message.startsWith(`${i.id}:`)).length,
+      steps: p.folded.nodeStats.get(nodeId)?.visits ?? 0,
+      carries: [] as string[],
+    }));
+  const edges = p.graph.transitions
+    .filter((t) => (t.from === nodeId || t.to === nodeId) && t.contract?.carries.length)
+    .map((t) => {
+      const key = edgeKey(t.from, t.to);
+      return {
+        key,
+        label: `${t.contract!.carries.join(", ")} carry over`,
+        where: key,
+        fails: p.report.failures.filter((f) => f.kind === "contract" && f.where === key).length,
+        steps: p.folded.edgeCounts.get(key) ?? 0,
+        carries: t.contract!.carries,
+      };
+    });
+  return [...invs, ...edges];
 }
 
-function EdgeList({
-  edges,
-  side,
-  report,
-  folded,
-  onFocusEdge,
-  labelOf,
-}: InspectorProps & { edges: Transition[]; side: "from" | "to"; labelOf: (id: string) => string }) {
-  if (!edges.length) return <p className="muted small">None</p>;
+function CheckRows({ checks, labelOf, onFocusEdge }: { checks: ReturnType<typeof nodeChecks>; labelOf: (id: string) => string; onFocusEdge: (k: string) => void }) {
+  if (!checks.length) return <p className="muted small">No checks touch this.</p>;
   return (
-    <ul className="edge-list">
-      {edges.map((t) => {
-        const key = edgeKey(t.from, t.to);
-        const count = folded.edgeCounts.get(key) ?? 0;
-        const status = report.failingEdges.has(key) ? "fail" : count ? "pass" : "untested";
+    <div>
+      {checks.map((c) => {
+        const status = c.fails ? "fail" : c.steps ? "pass" : "untested";
+        const edge = c.where.includes("->");
         return (
-          <li key={t.id}>
-            <button onClick={() => onFocusEdge(key)}>
-              <span className={`dot dot--${status}`} />
-              <span className="edge-list__name">
-                {labelOf(side === "from" ? t.from : t.to)}
-                <small>{t.kind}</small>
-              </span>
-              <span className="edge-list__carries">
-                {t.contract?.carries.length ? t.contract.carries.map((c) => <code key={c}>{c}</code>) : <em>no contract</em>}
-              </span>
-              <span className="edge-list__count">{count || "—"}</span>
-            </button>
-          </li>
+          <div key={c.key} className={`check check--${status}`}>
+            <span className={`dot dot--${status}`} />
+            <span style={{ minWidth: 0 }}>
+              {edge ? (
+                <button className="msg__link" onClick={() => onFocusEdge(c.where)}>
+                  {c.where.split("->").map(labelOf).join(" → ")}
+                </button>
+              ) : (
+                <b>{c.label}</b>
+              )}
+              {edge && <div className="muted small">{c.label}</div>}
+            </span>
+            <span className="check__n">{c.fails ? `${c.fails} fail` : c.steps ? `${c.steps} pass` : "not run"}</span>
+          </div>
         );
       })}
-    </ul>
+    </div>
   );
 }
 
-function EdgeView(p: InspectorProps & { edge: string }) {
-  const t = p.graph.transitions.find((x) => edgeKey(x.from, x.to) === p.edge || x.id === p.edge);
+function ComponentView(p: PropertiesProps & { screen: Screen; picks: Picks }) {
+  const shown = p.shown(p.screen);
   const labelOf = useLabels(p.graph);
-  if (!t) return <p className="muted">Transition not found.</p>;
-  const key = edgeKey(t.from, t.to);
-  const count = p.folded.edgeCounts.get(key) ?? 0;
-  const fails = p.report.failures.filter((f) => f.kind === "contract" && f.where === key);
+  const comps = useMemo(() => new Map(getComponents(shown.messages).map((c) => [c.id, c])), [shown.messages]);
+  const model = useMemo(() => getDataModel(shown.messages), [shown.messages]);
+  const first = p.picks.items[0];
+  const c = comps.get(first.id);
+  const bindings = c ? componentBindings(c, model) : [];
+  // Contracts whose carried keys this component displays (via a binding path ending in that key).
+  const checks = nodeChecks(p, p.screen.nodeId).filter(
+    (k) => !k.carries.length || k.carries.some((key) => bindings.some((b) => b.path.split("/").some((seg) => seg.toLowerCase().startsWith(key.toLowerCase())))),
+  );
+  const PROPS = ["text", "label", "variant", "name", "value", "justify", "align", "usageHint", "description"];
+
   return (
     <>
-      <section className="block">
-        <div className="title-row">
-          <h2>
-            {labelOf(t.from)} → {labelOf(t.to)}
-          </h2>
-        </div>
-        <div className="mono muted">{t.kind}</div>
-        <div className="stats">
-          <Stat value={count.toLocaleString()} label="traversals" />
-          <Stat value={fails.length} label="contract failures" tone={fails.length ? "bad" : undefined} />
-          <Stat value={count ? (fails.length ? "fail" : "pass") : "—"} label="status" tone={fails.length ? "bad" : count ? "ok" : undefined} />
-        </div>
-      </section>
-      <section className="block">
-        <h3>Contract</h3>
-        {t.contract?.carries.length ? (
+      {p.picks.items.length > 1 && (
+        <section className="block">
+          <h3>Selection</h3>
           <div className="chips">
-            {t.contract.carries.map((c) => (
-              <code className="chip" key={c}>
-                {c} must carry over
-              </code>
+            {p.picks.items.map((it) => (
+              <span key={it.id} className="chip">
+                {it.type} <code>{it.id}</code>
+              </span>
             ))}
           </div>
-        ) : (
-          <p className="muted">No contract declared. Nothing is required to survive this jump.</p>
-        )}
-        {fails.length > 0 && (
-          <ul className="fail-list">
-            {fails.slice(0, 5).map((f) => (
-              <li key={`${f.traceId}-${f.stepIndex}-${f.message}`} className="fail fail--static">
-                <IconAlert className="fail__icon" />
-                <span className="fail__main">
-                  <span className="fail__where">
-                    trace {f.traceId} · step {f.stepIndex}
-                  </span>
-                  <span className="fail__msg">{f.message}</span>
-                </span>
-              </li>
+        </section>
+      )}
+      <section className="block">
+        <dl className="props">
+          <dt>Type</dt>
+          <dd>{c?.type ?? first.type}</dd>
+          <dt>Id</dt>
+          <dd>
+            <code>{first.id}</code>
+          </dd>
+          <dt>Shows</dt>
+          <dd>{first.label}</dd>
+          {c &&
+            PROPS.filter((k) => c.props[k] !== undefined).map((k) => {
+              const v = c.props[k];
+              const bound = typeof v === "object" && v !== null && "path" in v;
+              return (
+                <FragmentRow key={k} k={k}>
+                  {bound ? (
+                    <>
+                      <code>{String((v as { path: string }).path)}</code>
+                      <small>{resolveText(v, model) || "—"}</small>
+                    </>
+                  ) : (
+                    String(typeof v === "object" ? JSON.stringify(v) : v)
+                  )}
+                </FragmentRow>
+              );
+            })}
+        </dl>
+      </section>
+      {bindings.length > 0 && (
+        <section className="block">
+          <h3>Data bindings</h3>
+          <dl className="props">
+            {bindings.slice(0, 10).map((b) => (
+              <FragmentRow key={`${b.prop}${b.path}`} k={b.prop}>
+                <code>{b.path}</code>
+                <small>{b.value === undefined ? "per list item" : typeof b.value === "object" ? JSON.stringify(b.value).slice(0, 80) : String(b.value)}</small>
+              </FragmentRow>
             ))}
-          </ul>
-        )}
+          </dl>
+        </section>
+      )}
+      <section className="block">
+        <h3>Checks on this step</h3>
+        <CheckRows checks={checks} labelOf={labelOf} onFocusEdge={p.onFocusEdge} />
       </section>
       <section className="block">
         <div className="row-btns">
-          <button className="btn" onClick={() => p.onFocusNode(t.from)}>
-            Go to {labelOf(t.from)}
+          <button className="btn btn--primary" onClick={p.onEditWithAI}>
+            <IconSpark width={14} height={14} /> Edit with AI
           </button>
-          <button className="btn" onClick={() => p.onFocusNode(t.to)}>
-            Go to {labelOf(t.to)}
+          <button className="btn" onClick={p.onFlagPicked}>
+            <IconComment width={14} height={14} /> Flag
+          </button>
+          <button className="btn" onClick={p.onLasso} title="Lasso more components (L)">
+            <IconLasso width={14} height={14} /> Lasso
           </button>
         </div>
+        <button className="btn btn--ghost btn--sm" style={{ marginTop: 8 }} onClick={p.onClearPicks}>
+          Back to screen
+        </button>
       </section>
     </>
   );
 }
 
-function ScreenView(p: InspectorProps & { screen: Screen }) {
+function FragmentRow({ k, children }: { k: string; children: React.ReactNode }) {
+  return (
+    <>
+      <dt>{k}</dt>
+      <dd>{children}</dd>
+    </>
+  );
+}
+
+function ScreenView(p: PropertiesProps & { screen: Screen }) {
   const { screen } = p;
+  const shown = p.shown(screen);
   const node = p.graph.nodes.find((n) => n.id === screen.nodeId);
-  const notes = p.annotations[screen.id] ?? [];
+  const labelOf = useLabels(p.graph);
+  const notes = p.annotations[shown.id] ?? [];
+  const versions = p.versionsOf(screen.id);
   const [text, setText] = useState("");
   const input = useRef<HTMLInputElement>(null);
 
@@ -367,19 +304,19 @@ function ScreenView(p: InspectorProps & { screen: Screen }) {
 
   const submit = () => {
     if (!text.trim() || p.branching) return;
-    p.onBranch(screen, text.trim());
+    p.onBranch(shown, text.trim());
   };
 
   return (
     <>
       <section className="block">
         <div className="eyebrow">
-          {node?.label ?? screen.nodeId} · {screen.model}
+          {node?.label ?? screen.nodeId} · {shown.model}
         </div>
         <div className="title-row">
-          <h2 className="mono">{screen.variant}</h2>
+          <h2 className="mono">{shown.variant}</h2>
         </div>
-        <p className="rationale">{screen.rationale}</p>
+        {shown.rationale && <p className="rationale">{shown.rationale}</p>}
         <div className="chips">
           {Object.entries(screen.context).map(([k, v]) => (
             <span className="chip chip--ctx" key={k}>
@@ -390,9 +327,27 @@ function ScreenView(p: InspectorProps & { screen: Screen }) {
         </div>
       </section>
 
+      {versions.list.length > 1 && (
+        <section className="block">
+          <h3>Versions</h3>
+          <div className="chips">
+            {versions.list.map((v, i) => (
+              <button key={v.id} className={`vchip${versions.active === i ? " is-on" : ""}`} onClick={() => p.onSetVersion(screen.id, i)}>
+                {i === 0 ? "v1 original" : `v${i + 1}`}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="block">
+        <h3>Checks</h3>
+        <CheckRows checks={nodeChecks(p, screen.nodeId)} labelOf={labelOf} onFocusEdge={p.onFocusEdge} />
+      </section>
+
       <section className="block branch">
         <h3>
-          <IconBranch width={14} height={14} /> Branch
+          <IconBranch width={13} height={13} /> Branch
         </h3>
         <form
           className="branch__form"
@@ -418,7 +373,6 @@ function ScreenView(p: InspectorProps & { screen: Screen }) {
               {p.branching ? <span className="spinner" aria-label="Branching" /> : "Branch"}
             </button>
           </div>
-          <p className="muted small">Generates the next state and its screen, wired from {node?.label ?? "this state"}.</p>
         </form>
       </section>
 
@@ -427,8 +381,8 @@ function ScreenView(p: InspectorProps & { screen: Screen }) {
           Annotations <span className="count">{notes.length}</span>
         </h3>
         {notes.length === 0 && (
-          <p className="muted">
-            Press <span className="kbd">A</span> and click the screen to pin a note.
+          <p className="muted small">
+            Press <span className="kbd">C</span> and click a component to pin a note.
           </p>
         )}
         <ol className="notes">
@@ -442,7 +396,7 @@ function ScreenView(p: InspectorProps & { screen: Screen }) {
                 </div>
                 <div>{a.text}</div>
               </div>
-              <button className="icon-btn icon-btn--sm" aria-label="Delete annotation" onClick={() => p.onDeleteAnnotation(screen.id, a.id)}>
+              <button className="icon-btn icon-btn--sm" aria-label="Delete annotation" onClick={() => p.onDeleteAnnotation(shown.id, a.id)}>
                 <IconX width={12} height={12} />
               </button>
             </li>
@@ -453,24 +407,206 @@ function ScreenView(p: InspectorProps & { screen: Screen }) {
   );
 }
 
-function useLabels(graph: FlowGraph) {
-  return useMemo(() => {
-    const m = new Map(graph.nodes.map((n) => [n.id, n.label]));
-    return (id: string) => m.get(id) ?? id;
-  }, [graph]);
+function NodeView(p: PropertiesProps & { nodeId: string }) {
+  const node = p.graph.nodes.find((n) => n.id === p.nodeId);
+  const labelOf = useLabels(p.graph);
+  if (!node) return <p className="muted">This step no longer exists.</p>;
+  const stats = p.folded.nodeStats.get(node.id);
+  const screens = p.screensByNode.get(node.id) ?? [];
+  const incoming = p.graph.transitions.filter((t) => t.to === node.id);
+  const outgoing = p.graph.transitions.filter((t) => t.from === node.id);
+  const invFails = p.report.failures.filter((f) => f.kind === "invariant" && f.where === node.id);
+
+  return (
+    <>
+      <section className="block">
+        <div className="mono muted small">
+          {node.component} · {node.stage}
+        </div>
+        <div className="stats">
+          <Stat value={(stats?.traces ?? 0).toLocaleString()} label="reached" />
+          <Stat value={`${pct(stats?.traces ?? 0, p.folded.traceCount)}%`} label="of sessions" />
+          <Stat value={`${pct(stats?.completions ?? 0, stats?.traces ?? 0)}%`} label="completed" tone="ok" />
+        </div>
+        {invFails.length > 0 && (
+          <div className="callout callout--bad">
+            <b>{invFails.length} invariant failures</b>
+            <span>{invFails[0].message}</span>
+          </div>
+        )}
+      </section>
+      <section className="block">
+        <h3>Into this step</h3>
+        <EdgeList edges={incoming} side="from" {...p} labelOf={labelOf} />
+        <h3>Out of this step</h3>
+        <EdgeList edges={outgoing} side="to" {...p} labelOf={labelOf} />
+      </section>
+      <section className="block">
+        <h3>
+          Screens <span className="count">{screens.length}</span>
+        </h3>
+        <ul className="screen-list">
+          {screens.map((s) => (
+            <li key={s.id}>
+              <button onClick={() => p.onSelectScreen(s.id, node.id)}>
+                <span className="screen-list__name">{p.shown(s).variant}</span>
+                <span className="screen-list__ctx">{Object.values(s.context).filter((v) => !v.includes("→")).join(" · ")}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+        <button className="btn btn--block" onClick={() => p.onGenerate(node.id)} disabled={p.generating}>
+          <IconSpark /> {p.generating ? "Generating…" : "Generate a screen for this step"}
+        </button>
+      </section>
+    </>
+  );
 }
 
-function edgeLabel(key: string, labelOf: (id: string) => string) {
-  const [a, b] = key.split("->");
-  return `${labelOf(a)} → ${labelOf(b)}`;
+function EdgeList({ edges, side, report, folded, onFocusEdge, labelOf }: PropertiesProps & { edges: Transition[]; side: "from" | "to"; labelOf: (id: string) => string }) {
+  if (!edges.length) return <p className="muted small">None</p>;
+  return (
+    <ul className="edge-list">
+      {edges.map((t) => {
+        const key = edgeKey(t.from, t.to);
+        const count = folded.edgeCounts.get(key) ?? 0;
+        const status = report.failingEdges.has(key) ? "fail" : count ? "pass" : "untested";
+        return (
+          <li key={t.id}>
+            <button onClick={() => onFocusEdge(key)}>
+              <span className={`dot dot--${status}`} />
+              <span className="edge-list__name">
+                {labelOf(side === "from" ? t.from : t.to)}
+                <small>{t.kind}</small>
+              </span>
+              <span className="edge-list__carries">
+                {t.contract?.carries.length ? t.contract.carries.map((c) => <code key={c}>{c}</code>) : <em>no contract</em>}
+              </span>
+              <span className="edge-list__count">
+                <IconPerson width={11} height={11} />
+                {count || "—"}
+              </span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
-function groupFailures(failures: Failure[]) {
-  const m = new Map<string, { where: string; kind: Failure["kind"]; count: number; example: string }>();
-  for (const f of failures) {
-    const g = m.get(f.where) ?? { where: f.where, kind: f.kind, count: 0, example: f.message };
-    g.count++;
-    m.set(f.where, g);
-  }
-  return [...m.values()].sort((a, b) => b.count - a.count);
+function EdgeView(p: PropertiesProps & { edge: string }) {
+  const t = p.graph.transitions.find((x) => edgeKey(x.from, x.to) === p.edge || x.id === p.edge);
+  const labelOf = useLabels(p.graph);
+  if (!t) return <p className="muted">Transition not found.</p>;
+  const key = edgeKey(t.from, t.to);
+  const count = p.folded.edgeCounts.get(key) ?? 0;
+  const fails = p.report.failures.filter((f) => f.kind === "contract" && f.where === key);
+  const failingTraces = [...new Map(fails.map((f) => [f.traceId, f])).values()];
+  return (
+    <>
+      <section className="block">
+        <div className="mono muted small">{t.kind}</div>
+        <div className="stats">
+          <Stat value={count.toLocaleString()} label="sessions" />
+          <Stat value={count - failingTraces.length >= 0 ? (count - failingTraces.length).toLocaleString() : "—"} label="passed" tone={count ? "ok" : undefined} />
+          <Stat value={fails.length} label="failed" tone={fails.length ? "bad" : undefined} />
+        </div>
+      </section>
+      <section className="block">
+        <h3>Contract</h3>
+        {t.contract?.carries.length ? (
+          <div className="chips">
+            {t.contract.carries.map((c) => (
+              <code className="chip" key={c}>
+                {c}
+              </code>
+            ))}
+          </div>
+        ) : (
+          <p className="muted small">No contract declared. Nothing is required to survive this jump.</p>
+        )}
+      </section>
+      {failingTraces.length > 0 && (
+        <section className="block">
+          <h3>
+            Failing sessions <span className="count">{failingTraces.length}</span>
+          </h3>
+          <ul className="fail-list">
+            {failingTraces.slice(0, 8).map((f) => (
+              <li key={f.traceId}>
+                <button className="fail" onClick={() => p.onReplay({ traceId: f.traceId, step: Math.max(0, f.stepIndex - 1) })}>
+                  <IconAlert className="fail__icon" width={14} height={14} />
+                  <span className="fail__main">
+                    <span className="fail__where">{f.traceId} · replay</span>
+                    <span className="fail__msg">{f.message}</span>
+                  </span>
+                  <IconChevron width={13} height={13} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      <section className="block">
+        <div className="row-btns">
+          <button className="btn btn--sm" onClick={() => p.onFocusNode(t.from)}>
+            Go to {labelOf(t.from)}
+          </button>
+          <button className="btn btn--sm" onClick={() => p.onFocusNode(t.to)}>
+            Go to {labelOf(t.to)}
+          </button>
+        </div>
+      </section>
+    </>
+  );
+}
+
+/** Step through one session's screens, with the failures at each step. */
+function Replay(p: PropertiesProps & { replay: ReplayState }) {
+  const trace = p.traces.find((t) => t.id === p.replay.traceId);
+  const labelOf = useLabels(p.graph);
+  if (!trace) return <p className="muted">Session not found in this run.</p>;
+  const i = Math.min(Math.max(0, p.replay.step), trace.steps.length - 1);
+  const step = trace.steps[i];
+  const screen = step.screenId ? p.screenById.get(step.screenId) : undefined;
+  const fails = p.report.failures.filter((f) => f.traceId === trace.id && f.stepIndex === i);
+  const go = (n: number) => p.onReplay({ traceId: trace.id, step: n });
+  return (
+    <div className="replay">
+      <div className="replay__head">
+        <b>{Object.values(trace.context).filter((v) => !v.includes("→")).join(" · ")}</b>
+        <span style={{ marginLeft: "auto" }}>{trace.outcome}</span>
+      </div>
+      <div className="replay__step">
+        Step {i + 1} of {trace.steps.length} · <b>{labelOf(step.node)}</b>
+      </div>
+      {screen ? (
+        <div className={`replay__frame${fails.length ? " is-failing" : ""}`}>
+          <ScreenFrame screen={p.shown(screen)} width={180} />
+        </div>
+      ) : (
+        <div className="replay__props">No screen recorded for this step.</div>
+      )}
+      {fails.map((f) => (
+        <div key={f.message} className="replay__fail">
+          {f.message}
+        </div>
+      ))}
+      {step.userAction && <div className="replay__step">“{step.userAction}”</div>}
+      <div className="replay__props">{JSON.stringify(step.props)}</div>
+      <div className="replay__nav">
+        <button className="btn btn--sm" disabled={i === 0} onClick={() => go(i - 1)}>
+          Previous
+        </button>
+        <button className="btn btn--sm" disabled={i >= trace.steps.length - 1} onClick={() => go(i + 1)}>
+          Next
+        </button>
+        {screen && (
+          <button className="btn btn--sm btn--ghost" onClick={() => p.onSelectScreen(screen.id, screen.nodeId)}>
+            Open on canvas
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }

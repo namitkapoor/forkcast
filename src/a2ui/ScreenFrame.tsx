@@ -21,7 +21,7 @@ export interface ScreenFrameProps {
   width?: number;
   onAction?: (action: ScreenAction) => void;
   /** Click on a component (live mode) — used to pin annotations. */
-  onComponentClick?: (componentId: string, rel: { x: number; y: number }) => void;
+  onComponentClick?: (componentId: string, rel: { x: number; y: number }, mods: { shiftKey: boolean }) => void;
   /** Live mode only: clicks pick a component (onComponentClick) instead of triggering actions. */
   annotate?: boolean;
 }
@@ -93,7 +93,7 @@ export function ScreenFrame({ screen, mode = "thumb", width = 240, onAction, onC
     const r = frame.getBoundingClientRect();
     const rel = { x: clamp01((e.clientX - r.left) / r.width), y: clamp01((e.clientY - r.top) / r.height) };
     const id = componentIdFromEvent(e.nativeEvent, frame);
-    if (id) onComponentClick?.(id, rel);
+    if (id) onComponentClick?.(id, rel, { shiftKey: e.shiftKey });
   };
 
   const radius = Math.max(8, Math.round(28 * scale));

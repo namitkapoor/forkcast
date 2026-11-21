@@ -1,13 +1,16 @@
-import { memo, useEffect, useRef, useState, type MouseEvent } from "react";
+import { memo, useCallback, useRef, type MouseEvent, type PointerEvent } from "react";
 import { Handle, Position, useViewportStore, type Node, type NodeProps } from "@xyflow/react";
 import type { StateNode } from "../graph/types";
 import type { NodeStats } from "../graph/fold";
-import type { Annotation, Screen } from "../a2ui/types";
+import type { Screen } from "../a2ui/types";
 import { ScreenFrame } from "../a2ui/ScreenFrame";
-import { useZoomLevel } from "./zoom";
-import { prefersReducedMotion } from "../ui/storage";
-import { useCanvas } from "./context";
-import { THUMB_H, THUMB_W, visibleScreens, type SectionSize } from "./geometry";
+import { componentIdFromEvent } from "../a2ui/componentId";
+import { componentRects } from "../a2ui/componentRects";
+import { useCanvas, type Picked } from "./context";
+import { setHover } from "./hoverStore";
+import { ScreenOverlay } from "./ScreenOverlay";
+import { COL_GAP, MORE_H, THUMB_H, THUMB_W, slotOffset, visibleScreens, type SectionSize } from "./geometry";
+import { IconDevice, IconPerson } from "../ui/icons";
 
 export type SectionData = {
   state: StateNode;
@@ -26,302 +29,200 @@ export type SectionData = {
 
 export type SectionFlowNode = Node<SectionData, "section">;
 
+/** Screens become interactive (hover boxes, picking, lasso) once they're this large on screen. */
+export const LIVE_ZOOM = 0.7;
+
+const useZoom = () => useViewportStore((s) => Math.max(0.05, s.transform[2]));
+
 function SectionNodeView({ data }: NodeProps<SectionFlowNode>) {
-  const level = useZoomLevel();
-  const { selection } = useCanvas();
-  const { state, stats, failing, edgeFailing, reach, completion, screens, size, depth, isBranch } = data;
+  const zoom = useZoom();
+  const inv = 1 / zoom;
+  const { selection, selectNode } = useCanvas();
+  const { state, stats, failing, edgeFailing, screens, size, isBranch } = data;
   const nodeSelected =
     (selection.kind === "node" && selection.id === state.id) || (selection.kind === "screen" && selection.nodeId === state.id);
   const risky = failing || edgeFailing;
-  const fresh = useFirstAppearance(drawnNodes, state.id, (isBranch ? 0 : depth * 0.12) + 2.4);
-  const cls = ["sec", `sec--${level}`, nodeSelected && "is-selected", risky && "is-failing", isBranch && "is-branch", fresh && "is-drawing"]
-    .filter(Boolean)
-    .join(" ");
+  const cls = ["step", nodeSelected && "is-selected", risky && "is-failing", isBranch && "is-branch"].filter(Boolean).join(" ");
 
   return (
-    <div
-      className={cls}
-      style={{ width: size.w, height: size.h, ["--d" as string]: `${isBranch ? 0 : depth * 0.12}s` }}
-      data-node={state.id}
-    >
-      <span className="wf wf--top" aria-hidden="true" />
-      <span className="wf wf--right" aria-hidden="true" />
-      <span className="wf wf--bottom" aria-hidden="true" />
-      <span className="wf wf--left" aria-hidden="true" />
+    <div className={cls} style={{ width: size.w, height: size.h, ["--inv" as string]: inv }} data-node={state.id}>
+      <div className="step__bg" />
       <Handle type="target" position={Position.Left} isConnectable={false} className="sec__handle" />
       <Handle type="source" position={Position.Right} isConnectable={false} className="sec__handle" />
-
-      {level === "far" ? (
-        <div className="tile">
-          <div className="tile__top">
-            <span className="tile__step">{isBranch ? "branch" : `step ${depth + 1}`}</span>
-            {state.acts && <span className="tile__acts">commits</span>}
-            {risky && <span className="tile__dot" aria-label="failing checks" />}
-          </div>
-          <div className="tile__label">{state.label}</div>
-          <div className="tile__component">{state.component}</div>
-          <div className="tile__reach">
-            <b>{reach}%</b>
-            <span>reach</span>
-          </div>
-          <div className="tile__bar">
-            <i style={{ width: `${Math.max(reach, reach ? 2 : 0)}%` }} />
-          </div>
-          <div className="tile__screens">
-            {screens.length ? `${screens.length} screen${screens.length === 1 ? "" : "s"}` : "no screens yet"}
-          </div>
-        </div>
-      ) : (
-        <>
-          <div className="sec__head">
-            <span className="sec__label">{state.label}</span>
-            {state.acts && <span className="badge badge--acts">commits</span>}
-            {isBranch && <span className="badge badge--branch">branch</span>}
-            {risky && <span className="badge badge--bad">{failing ? "invariant failing" : "contract failing"}</span>}
-            <span className="sec__count">{screens.length || "no"} screen{screens.length === 1 ? "" : "s"}</span>
-          </div>
-          <div className="sec__frame">
-            <Slots screens={screens} nodeId={state.id} stats={stats} level={level} />
-            <div className="sec__foot">
-              <span>
-                <b>{reach}%</b> reach
-              </span>
-              <span>
-                <b>{stats.visits.toLocaleString()}</b> visits
-              </span>
-              <span>
-                <b>{completion}%</b> complete
-              </span>
-              <span className="sec__component">{state.component}</span>
-            </div>
-          </div>
-        </>
-      )}
+      <div
+        className="step__head"
+        style={{ transform: `scale(${inv})`, maxWidth: Math.max(60, (size.w + COL_GAP * 0.8) * zoom) }}
+        onClick={(e) => {
+          e.stopPropagation();
+          selectNode(state.id);
+        }}
+        title={`${state.label} · ${stats.traces} sessions reached this step`}
+      >
+        <span className="step__label">{state.label}</span>
+        <span className="step__reach">
+          <IconPerson width={12} height={12} className="person" />
+          {stats.traces.toLocaleString()} reached
+        </span>
+        {isBranch && <span className="badge badge--branch">branch</span>}
+        {risky && <span className="step__fail">{failing ? "invariant" : "contract"}</span>}
+      </div>
+      <Slots screens={screens} nodeId={state.id} stats={stats} size={size} zoom={zoom} />
     </div>
   );
 }
 
 export const SectionNode = memo(SectionNodeView);
 
-function Slots({
-  screens,
-  nodeId,
-  stats,
-  level,
-}: {
-  screens: Screen[];
-  nodeId: string;
-  stats: NodeStats;
-  level: "mid" | "near";
-}) {
-  const { selection } = useCanvas();
+function Slots({ screens, nodeId, stats, size, zoom }: { screens: Screen[]; nodeId: string; stats: NodeStats; size: SectionSize; zoom: number }) {
+  const { selection, selectNode } = useCanvas();
   const selectedId = selection.kind === "screen" ? selection.id : undefined;
   const { shown, more } = visibleScreens(screens, selectedId);
 
   if (!screens.length) {
     const sample = stats.samples[0];
+    const o = slotOffset(size, 0);
     return (
-      <div className="sec__row">
-        <div className="slot-wrap">
-          <div className="slot__cap">no rendering recorded</div>
-          <div className="ghost" style={{ width: THUMB_W, height: THUMB_H }}>
-            <div className="ghost__notch" />
-            <div className="ghost__title">props seen here</div>
-            {sample ? (
-              <dl className="ghost__props">
-                {Object.entries(sample)
-                  .slice(0, 8)
-                  .map(([k, v]) => (
-                    <div key={k}>
-                      <dt>{k}</dt>
-                      <dd>{String(v)}</dd>
-                    </div>
-                  ))}
-              </dl>
-            ) : (
-              <p className="ghost__empty">No traffic yet. Generate a screen or run a simulation.</p>
-            )}
-          </div>
+      <div className="scr-wrap" style={{ left: o.x, top: o.y }}>
+        <div className="ghost" style={{ width: THUMB_W, height: THUMB_H }}>
+          <div className="ghost__title">No rendering recorded · props seen here</div>
+          {sample ? (
+            <dl className="ghost__props">
+              {Object.entries(sample)
+                .slice(0, 8)
+                .map(([k, v]) => (
+                  <div key={k}>
+                    <dt>{k}</dt>
+                    <dd>{String(v)}</dd>
+                  </div>
+                ))}
+            </dl>
+          ) : (
+            <p className="ghost__empty">No traffic yet. Generate a screen or run a simulation.</p>
+          )}
         </div>
       </div>
     );
   }
 
+  const last = slotOffset(size, shown.length - 1);
   return (
-    <div className="sec__row">
+    <>
       {shown.map((s, i) => {
-        const isLast = i === shown.length - 1 && more > 0;
+        const o = slotOffset(size, i);
         return (
-          <div className="slot-wrap" key={s.id}>
-            <div className={`slot__cap${s.id === selectedId ? " is-selected" : ""}`} title={s.variant}>
-              {s.variant}
-            </div>
-            <Slot screen={s} nodeId={nodeId} live={level === "near" && s.id === selectedId} />
-            {isLast && (
-              <div className="slot__more" aria-label={`${more} more screens`}>
-                +{more} more
-              </div>
-            )}
+          <div className="scr-wrap" key={s.id} style={{ left: o.x, top: o.y - 22 }}>
+            <Slot screen={s} nodeId={nodeId} live={zoom >= LIVE_ZOOM && s.id === selectedId} selected={s.id === selectedId} zoom={zoom} />
           </div>
         );
       })}
-    </div>
-  );
-}
-
-const NO_ANNOTATIONS: Annotation[] = [];
-
-function Slot({ screen, nodeId, live }: { screen: Screen; nodeId: string; live: boolean }) {
-  const { selection, tool, annotations, draft, selectScreen, startDraft, onScreenAction } = useCanvas();
-  const selected = selection.kind === "screen" && selection.id === screen.id;
-  const pins = annotations[screen.id] ?? NO_ANNOTATIONS;
-  const componentClickAt = useRef(0);
-  const ref = useRef<HTMLDivElement>(null);
-
-  const onClick = (e: MouseEvent<HTMLDivElement>) => {
-    e.stopPropagation();
-    if (tool === "hand") return;
-    if (tool === "annotate") {
-      if (Date.now() - componentClickAt.current < 80) return; // renderer already reported the component
-      const r = ref.current!.getBoundingClientRect();
-      const x = (e.clientX - r.left) / r.width;
-      const y = (e.clientY - r.top) / r.height;
-      if (!selected) selectScreen(screen.id, nodeId, { focus: !live });
-      startDraft({ screenId: screen.id, x: clamp01(x), y: clamp01(y) });
-      return;
-    }
-    selectScreen(screen.id, nodeId);
-  };
-
-  const onDoubleClick = (e: MouseEvent) => {
-    e.stopPropagation();
-    selectScreen(screen.id, nodeId, { focus: true });
-  };
-
-  return (
-    <div
-      ref={ref}
-      className={`slot${selected ? " is-selected" : ""}${live ? " is-live nodrag nopan nowheel" : " is-thumb"}${tool === "annotate" ? " is-annotating" : ""}`}
-      style={{ width: THUMB_W, height: THUMB_H }}
-      onClick={onClick}
-      onDoubleClick={onDoubleClick}
-      data-screen={screen.id}
-    >
-      <ScreenFrame
-        screen={screen}
-        mode={live ? "live" : "thumb"}
-        width={THUMB_W}
-        onAction={live ? (a) => onScreenAction(screen.id, a) : undefined}
-        annotate={live && tool === "annotate"}
-        onComponentClick={
-          live && tool === "annotate"
-            ? (componentId, rel) => {
-                componentClickAt.current = Date.now();
-                startDraft({ screenId: screen.id, x: clamp01(rel.x), y: clamp01(rel.y), componentId });
-              }
-            : undefined
-        }
-      />
-      {pins.length > 0 && <Pins pins={pins} />}
-      {draft?.screenId === screen.id && <Composer />}
-    </div>
-  );
-}
-
-/** Pins and the composer keep a constant on-screen size whatever the canvas zoom. */
-const useInverseZoom = () => useViewportStore((st) => 1 / Math.max(0.05, st.transform[2]));
-
-function Pins({ pins }: { pins: Annotation[] }) {
-  const inv = useInverseZoom();
-  return (
-    <>
-      {pins.map((a, i) => (
-        <span
-          key={a.id}
-          className={`pin pin--${a.kind}`}
-          style={{ left: `${a.x * 100}%`, top: `${a.y * 100}%`, transform: `scale(${inv})` }}
-          title={a.text}
+      {more > 0 && (
+        <button
+          className="scr__more"
+          style={{ left: last.x, width: THUMB_W, top: last.y + THUMB_H + (MORE_H - 36) / 2 }}
+          onClick={(e) => {
+            e.stopPropagation();
+            selectNode(nodeId);
+          }}
         >
-          {i + 1}
-        </span>
-      ))}
+          +{more} more screens
+        </button>
+      )}
     </>
   );
 }
 
-function Composer() {
-  const { draft, cancelDraft, saveDraft } = useCanvas();
-  const inv = useInverseZoom();
-  const [text, setText] = useState("");
-  const [kind, setKind] = useState<Annotation["kind"]>("note");
-  const input = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => input.current?.focus({ preventScroll: true }), []);
-  if (!draft) return null;
-  const flipX = draft.x > 0.5;
-  const style = {
-    transform: `scale(${inv})`,
-    transformOrigin: flipX ? "top right" : "top left",
-    top: `${draft.y * 100}%`,
-    ...(flipX ? { right: `${(1 - draft.x) * 100}%` } : { left: `${draft.x * 100}%` }),
+function Slot({ screen, nodeId, live, selected, zoom }: { screen: Screen; nodeId: string; live: boolean; selected: boolean; zoom: number }) {
+  const { tool, picks, shown: shownOf, selectScreen, setPicks, startDraft, onScreenAction } = useCanvas();
+  const shown = shownOf(screen);
+  const ref = useRef<HTMLDivElement>(null);
+  const inv = 1 / zoom;
+  const picking = live && (tool === "select" || tool === "annotate" || tool === "branch");
+  const phone = useCallback(() => ref.current?.querySelector<HTMLElement>(".fc-phone") ?? null, []);
+
+  const onClick = (e: MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    if (tool === "hand") return;
+    if (!live) {
+      selectScreen(screen.id, nodeId, { focus: tool === "lasso" || tool === "annotate" || e.detail > 1 });
+      return;
+    }
+    // Live: component clicks are handled by ScreenFrame; a click on empty screen area clears picks.
+    if (tool === "select" && picks?.screenId === screen.id && !(e.target as Element).closest?.(".fc-phone__content *")) setPicks(null);
   };
-  const submit = () => (text.trim() ? saveDraft(text.trim(), kind) : cancelDraft());
+
+  const describe = (id: string): Picked => {
+    const el = phone();
+    const r = el ? componentRects(el).find((x) => x.id === id) : undefined;
+    return { id, type: r?.type ?? "Component", label: r?.label ?? id };
+  };
+
+  const onComponentClick = (id: string, rel: { x: number; y: number }, mods: { shiftKey: boolean }) => {
+    const item = describe(id);
+    if (tool === "annotate") {
+      setPicks({ screenId: screen.id, items: [item] });
+      startDraft({ screenId: shown.id, x: clamp01(rel.x), y: clamp01(rel.y), componentId: id });
+      return;
+    }
+    if (mods.shiftKey && picks?.screenId === screen.id && !picks.lasso) {
+      const has = picks.items.some((p) => p.id === id);
+      const items = has ? picks.items.filter((p) => p.id !== id) : [...picks.items, item];
+      setPicks(items.length ? { screenId: screen.id, items } : null);
+    } else {
+      setPicks({ screenId: screen.id, items: [item] });
+    }
+  };
+
+  const onPointerMove = (e: PointerEvent) => {
+    if (!picking) return;
+    const el = phone();
+    const id = el ? componentIdFromEvent(e.nativeEvent, el) : undefined;
+    setHover(id ? { screenId: screen.id, id } : null);
+  };
+
   return (
     <>
-      <span className="pin pin--draft" style={{ left: `${draft.x * 100}%`, top: `${draft.y * 100}%`, transform: `scale(${inv})` }} />
       <div
-        className={`composer nodrag nopan nowheel nokeys${flipX ? " composer--left" : ""}`}
-        style={style}
-        onClick={(e) => e.stopPropagation()}
-        onDoubleClick={(e) => e.stopPropagation()}
+        className={`scr__cap${selected ? " is-selected" : ""}`}
+        style={{ transform: `scale(${inv})`, width: THUMB_W * zoom }}
+        onClick={(e) => {
+          e.stopPropagation();
+          selectScreen(screen.id, nodeId);
+        }}
+        title={`${shown.variant} · ${Object.values(screen.context).join(" · ")}`}
       >
-        <div className="composer__kinds" role="radiogroup" aria-label="Annotation type">
-          {(["note", "bug", "rule"] as const).map((k) => (
-            <button key={k} role="radio" aria-checked={kind === k} className={kind === k ? "is-on" : ""} onClick={() => setKind(k)}>
-              {k}
-            </button>
-          ))}
-        </div>
-        {draft.componentId && <div className="composer__target">on {draft.componentId}</div>}
-        <textarea
-          ref={input}
-          value={text}
-          rows={2}
-          placeholder="Wrong price shown…"
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            e.stopPropagation();
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              submit();
-            }
-            if (e.key === "Escape") cancelDraft();
-          }}
+        <IconDevice width={12} height={12} />
+        <span>{captionOf(screen) || shown.variant}</span>
+        {shown !== screen && <span className="scr__ver">{shown.id.split("@")[1] ?? "v2"}</span>}
+      </div>
+      <div
+        ref={ref}
+        className={`scr${selected ? " is-selected" : ""}${live ? " is-live nodrag nopan nowheel" : " is-thumb"}`}
+        style={{ width: THUMB_W, height: THUMB_H }}
+        onClick={onClick}
+        onPointerMove={onPointerMove}
+        onPointerLeave={() => setHover(null)}
+        data-screen={screen.id}
+      >
+        <ScreenFrame
+          screen={shown}
+          mode={live ? "live" : "thumb"}
+          width={THUMB_W}
+          onAction={live ? (a) => onScreenAction(screen.id, a) : undefined}
+          annotate={picking}
+          onComponentClick={picking ? onComponentClick : undefined}
         />
-        <div className="composer__actions">
-          <button onClick={cancelDraft}>Cancel</button>
-          <button className="is-primary" onClick={submit}>
-            Pin note
-          </button>
-        </div>
+        {selected && <ScreenOverlay baseId={screen.id} nodeId={nodeId} shown={shown} live={live} phone={phone} zoom={zoom} />}
       </div>
     </>
   );
 }
 
-/** Ids whose entrance animation already ran, so remounts (zoom changes, re-runs) don't replay it. */
-const drawnNodes = new Set<string>();
-
-/** True only for the first mount of this id in the session, and never under reduced motion. */
-export function useFirstAppearance(registry: Set<string>, id: string, seconds: number): boolean {
-  const [fresh, setFresh] = useState(() => !registry.has(id) && !prefersReducedMotion());
-  useEffect(() => {
-    registry.add(id);
-    if (!fresh) return;
-    const t = window.setTimeout(() => setFresh(false), seconds * 1000);
-    return () => window.clearTimeout(t);
-  }, [registry, id, fresh, seconds]);
-  return fresh;
-}
-
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
+/** Frame label: who this rendering is for (party · surface · currency), like a Stitch frame name. */
+function captionOf(s: Screen): string {
+  const c = s.context;
+  const parts = [c.party, c.surface, c.currency].filter(Boolean);
+  const tag = s.id.includes("--repriced") ? "repriced" : s.id.includes("--drift") ? "drift" : "";
+  return [...(parts.length ? parts : Object.values(c).filter((v) => !v.includes("→"))), tag].filter(Boolean).join(" · ");
+}
