@@ -155,10 +155,10 @@ const StudioCanvasInner: React.FC = () => {
           size={1.2}
           color="#2b2b34"
         />
-        <Controls position="bottom-left" className="!mb-24 !ml-3" />
+        <Controls position="bottom-left" className="!mb-4 !ml-3" />
         <MiniMap
           position="bottom-right"
-          className="!mb-24 !mr-3"
+          className="!mb-4 !mr-3"
           nodeColor={(n) => {
             const sc = (n.data as { screen?: { isInFinalFlow?: boolean; priority?: string } })
               ?.screen;
@@ -171,7 +171,7 @@ const StudioCanvasInner: React.FC = () => {
       </ReactFlow>
 
       {/* Active Mode / Final Flow Legend Pill */}
-      <div className="pointer-events-none absolute top-3 left-3 z-10 flex items-center gap-2 flex-wrap">
+      <div className="pointer-events-none absolute top-3 left-3 max-w-[58%] z-10 flex items-center gap-2 flex-wrap">
         {project.selectedScreenId && (
           <div className="px-2.5 py-1 rounded-full bg-emerald-950/90 border border-emerald-500/50 text-emerald-200 text-[11px] font-medium flex items-center gap-1.5 shadow-lg backdrop-blur">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />

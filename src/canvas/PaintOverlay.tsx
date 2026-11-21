@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Mic, MicOff, Send, Sparkles, X } from 'lucide-react';
+import { Loader2, Mic, MicOff, Send, Sparkles, X } from 'lucide-react';
 import type { AnnotationCategory } from '../types/studio';
 import { useVoiceInput } from '../hooks/useVoiceInput';
 
@@ -31,11 +31,14 @@ export const PaintOverlay: React.FC<PaintOverlayProps> = ({
   const [strokes, setStrokes] = useState<Array<Array<{ xPercent: number; yPercent: number }>>>([]);
   const [showPopover, setShowPopover] = useState(false);
   const [comment, setComment] = useState('');
+  const commentRef = useRef(comment);
+  commentRef.current = comment;
   const [category, setCategory] = useState<AnnotationCategory>('layout');
   const [includeInAi, setIncludeInAi] = useState(true);
 
-  const { isListening, isSupported, toggleListening } = useVoiceInput((text) => {
-    setComment(text);
+  const { isListening, isTranscribing, isSupported, toggleListening } = useVoiceInput({
+    getCurrentText: () => commentRef.current,
+    onTextUpdate: (nextText) => setComment(nextText),
   });
 
   const getPoint = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -190,12 +193,20 @@ export const PaintOverlay: React.FC<PaintOverlayProps> = ({
                 onClick={toggleListening}
                 className={`px-2 py-1.5 rounded-lg border text-xs flex items-center gap-1 transition ${
                   isListening
-                    ? 'bg-pink-600 border-pink-400 text-white animate-pulse'
+                    ? 'bg-rose-600 border-rose-400 text-white animate-pulse'
+                    : isTranscribing
+                    ? 'bg-violet-600/30 border-violet-400/60 text-violet-200'
                     : 'bg-zinc-900 border-zinc-700 text-zinc-300 hover:text-white'
                 }`}
-                title="Paint & Speak (Voice Input)"
+                title="Paint & Speak via Gemini streaming transcription"
               >
-                {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                {isTranscribing ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : isListening ? (
+                  <MicOff className="w-3.5 h-3.5" />
+                ) : (
+                  <Mic className="w-3.5 h-3.5" />
+                )}
               </button>
             )}
           </div>

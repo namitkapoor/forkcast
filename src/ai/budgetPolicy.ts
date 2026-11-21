@@ -1,12 +1,16 @@
 import type {
   BudgetConfig,
   FlowProject,
+  LlmTaskConfig,
+  LlmTaskKey,
   PriorityTier,
   RuntimeSettings,
   ScreenNode,
   TierPolicy,
+  ThinkingLevelSetting,
 } from '../types/studio';
 import { computeExplorationNeed } from '../graph/compiler';
+import { loadEnvRuntimeSettings } from './llmConfig';
 
 export const PRIORITY_WEIGHTS: Record<PriorityTier, number> = {
   core: 3.0,
@@ -14,15 +18,7 @@ export const PRIORITY_WEIGHTS: Record<PriorityTier, number> = {
   supporting: 0.5,
 };
 
-export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = {
-  apiKey: '',
-  useMockFallback: true,
-  models: {
-    core: 'gemini-2.5-pro',
-    standard: 'gemini-2.5-flash',
-    supporting: 'gemini-2.5-flash-lite',
-  },
-};
+export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = loadEnvRuntimeSettings();
 
 export const DEFAULT_BUDGET_CONFIG: BudgetConfig = {
   totalTokenBudget: 250_000,
@@ -33,21 +29,21 @@ export const DEFAULT_BUDGET_CONFIG: BudgetConfig = {
   },
   tierPolicies: {
     core: {
-      model: DEFAULT_RUNTIME_SETTINGS.models.core,
-      thinkingBudget: 2048,
+      model: DEFAULT_RUNTIME_SETTINGS.llmTasks.VARIANT_CORE.model,
+      thinkingBudget: 0,
       defaultVariantCount: 3,
       initialFidelity: 'interactive',
       evaluationDepth: 'deep',
     },
     standard: {
-      model: DEFAULT_RUNTIME_SETTINGS.models.standard,
-      thinkingBudget: 512,
+      model: DEFAULT_RUNTIME_SETTINGS.llmTasks.VARIANT_STANDARD.model,
+      thinkingBudget: 0,
       defaultVariantCount: 2,
       initialFidelity: 'interactive',
       evaluationDepth: 'standard',
     },
     supporting: {
-      model: DEFAULT_RUNTIME_SETTINGS.models.supporting,
+      model: DEFAULT_RUNTIME_SETTINGS.llmTasks.VARIANT_SUPPORTING.model,
       thinkingBudget: 0,
       defaultVariantCount: 1,
       initialFidelity: 'skeleton',
@@ -98,77 +94,108 @@ export function computeBudgetSummary(project: FlowProject): BudgetSummary {
   };
 }
 
+export type PolicyAction =
+  | 'disambiguate'
+  | 'generate-flow'
+  | 'generate-variant'
+  | 'point-paint-refine'
+  | 'ux-eval'
+  | 'simulate-personas';
+
 export interface EffectiveExecutionPolicy {
+  taskKey: LlmTaskKey;
+  taskConfig: LlmTaskConfig;
   tier: PriorityTier;
   model: string;
-  thinkingBudget: number;
+  thinkingLevel: ThinkingLevelSetting;
   variantCount: number;
   evaluationDepth: TierPolicy['evaluationDepth'];
   estimatedTokens: number;
   allocationReason: string;
 }
 
+/**
+ * Selects the exact `.env`-backed LLM Task Config (model + explicit reasoning level + budget)
+ * for every LLM call in the Studio based on action stakes, screen priority, and Exploit/Explore state.
+ */
+export function selectLlmTaskKey(
+  action: PolicyAction,
+  targetScreen?: ScreenNode | null
+): LlmTaskKey {
+  if (action === 'disambiguate') return 'DISAMBIGUATE';
+  if (action === 'generate-flow') return 'FLOW_ARCHITECT';
+  if (action === 'simulate-personas') return 'PERSONA_SIM';
+
+  const isExploitLocked = targetScreen?.policyMode === 'exploit-locked';
+  const priority: PriorityTier = targetScreen?.priority ?? 'core';
+
+  if (action === 'generate-variant') {
+    if (isExploitLocked || priority === 'supporting') return 'VARIANT_SUPPORTING';
+    if (priority === 'standard') return 'VARIANT_STANDARD';
+    return 'VARIANT_CORE';
+  }
+
+  if (action === 'point-paint-refine') {
+    if (!isExploitLocked && priority === 'core') return 'REFINE_CORE';
+    return 'REFINE_SMALL';
+  }
+
+  // ux-eval
+  return priority === 'core' ? 'UX_EVAL_CORE' : 'UX_EVAL_LIGHT';
+}
+
 export function resolveExecutionPolicy(
   project: FlowProject,
   settings: RuntimeSettings,
   targetScreen?: ScreenNode | null,
-  action: 'disambiguate' | 'generate-flow' | 'generate-variant' | 'point-paint-refine' | 'ux-eval' = 'point-paint-refine'
+  action: PolicyAction = 'point-paint-refine'
 ): EffectiveExecutionPolicy {
-  if (action === 'disambiguate') {
-    return {
-      tier: 'supporting',
-      model: settings.models.supporting,
-      thinkingBudget: 0,
-      variantCount: 0,
-      evaluationDepth: 'quick',
-      estimatedTokens: 650,
-      allocationReason: 'Fast ambiguity check (Flash-Lite) saves ~14k blind generation tokens',
-    };
-  }
+  const taskKey = selectLlmTaskKey(action, targetScreen);
+  const taskConfig = settings.llmTasks[taskKey];
 
-  const tier: PriorityTier = targetScreen?.priority ?? 'core';
+  const tier: PriorityTier =
+    action === 'disambiguate'
+      ? 'supporting'
+      : action === 'generate-flow'
+      ? 'core'
+      : action === 'simulate-personas'
+      ? 'standard'
+      : targetScreen?.policyMode === 'exploit-locked' && action !== 'ux-eval'
+      ? 'supporting'
+      : (targetScreen?.priority ?? 'core');
+
   const basePolicy = project.budgetConfig.tierPolicies[tier];
-  const configuredModel = settings.models[tier] || basePolicy.model;
   const explorationNeed = targetScreen ? computeExplorationNeed(targetScreen) : 1.2;
-
-  // Exploit-locked screens automatically downgrade to conserve token budget
-  if (targetScreen?.policyMode === 'exploit-locked' && action !== 'ux-eval') {
-    return {
-      tier: 'supporting',
-      model: settings.models.supporting,
-      thinkingBudget: 0,
-      variantCount: 1,
-      evaluationDepth: 'quick',
-      estimatedTokens: 2100,
-      allocationReason: 'Exploit-locked winner — using minimal tokens to preserve Core Explore budget',
-    };
-  }
 
   const variantCount =
     action === 'generate-variant'
-      ? Math.max(1, Math.min(4, Math.round(basePolicy.defaultVariantCount * Math.min(1.25, explorationNeed))))
+      ? Math.max(
+          1,
+          Math.min(4, Math.round(basePolicy.defaultVariantCount * Math.min(1.25, explorationNeed)))
+        )
+      : action === 'disambiguate'
+      ? 0
       : 1;
 
-  const baseTokenEstimate: Record<typeof action, number> = {
-    'generate-flow': 4800,
+  const baseTokenEstimate: Record<PolicyAction, number> = {
+    disambiguate: 650,
+    'generate-flow': 5600,
     'generate-variant': tier === 'core' ? 9200 : tier === 'standard' ? 5400 : 2400,
     'point-paint-refine': tier === 'core' ? 6800 : tier === 'standard' ? 4200 : 2100,
     'ux-eval': tier === 'core' ? 5200 : tier === 'standard' ? 3100 : 1500,
+    'simulate-personas': 2400,
   };
 
   return {
+    taskKey,
+    taskConfig,
     tier,
-    model: configuredModel,
-    thinkingBudget: basePolicy.thinkingBudget,
+    model: taskConfig.model,
+    thinkingLevel: taskConfig.thinkingLevel,
     variantCount,
     evaluationDepth: basePolicy.evaluationDepth,
     estimatedTokens: baseTokenEstimate[action],
-    allocationReason:
-      tier === 'core'
-        ? `Core UX Focus × Explore (${explorationNeed.toFixed(1)}x) → Pro reasoning tier`
-        : tier === 'standard'
-        ? 'Standard Flow → Balanced Flash tier'
-        : 'Supporting Flow → Lightweight Flash-Lite tier',
+    allocationReason: `${taskConfig.label} [${taskConfig.model} · thinkingLevel=${taskConfig.thinkingLevel}]`,
   };
 }
 

@@ -1,18 +1,23 @@
-import { GoogleGenAI } from '@google/genai';
+import { Type, type Schema } from '@google/genai';
 import type {
   AnnotationCategory,
   DisambiguationRequest,
   EvaluationReport,
   FlowEdge,
   FlowProject,
+  LlmTaskConfig,
+  LlmTaskKey,
   PriorityTier,
   RuntimeSettings,
   ScreenAnnotation,
   ScreenNode,
   TokenUsageEntry,
+  TraversalTrace,
 } from '../types/studio';
 import type { AssembledPromptContext } from './contextBuilder';
 import { resolveExecutionPolicy } from './budgetPolicy';
+import { callGeminiJson } from './geminiSdk';
+import { runSimulatedPersonas } from '../eval/traversalRunner';
 
 function uid(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36).slice(-4)}`;
@@ -24,82 +29,15 @@ export interface GenResult<T> {
   usedMock: boolean;
 }
 
-function shouldUseLiveGemini(settings: RuntimeSettings): boolean {
+export function shouldUseLiveGemini(settings: RuntimeSettings): boolean {
   return Boolean(settings.apiKey.trim()) && !settings.useMockFallback;
-}
-
-function extractBase64FromDataUrl(dataUrl: string): { mimeType: string; data: string } | null {
-  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-  if (!match) return null;
-  return { mimeType: match[1], data: match[2] };
-}
-
-async function callGeminiJson<T>(
-  settings: RuntimeSettings,
-  model: string,
-  systemPrompt: string,
-  userText: string,
-  images: Array<{ dataUrl: string }> = [],
-  thinkingBudget = 0
-): Promise<{ parsed: T; promptTokens: number; outputTokens: number; thoughtTokens: number }> {
-  const ai = new GoogleGenAI({ apiKey: settings.apiKey.trim() });
-
-  const parts: Array<Record<string, unknown>> = [{ text: userText }];
-  for (const img of images) {
-    const parsedImg = extractBase64FromDataUrl(img.dataUrl);
-    if (parsedImg) {
-      parts.push({
-        inlineData: {
-          mimeType: parsedImg.mimeType,
-          data: parsedImg.data,
-        },
-      });
-    }
-  }
-
-  const config: Record<string, unknown> = {
-    systemInstruction: systemPrompt,
-    responseMimeType: 'application/json',
-  };
-
-  if (thinkingBudget > 0 && !model.includes('lite')) {
-    config.thinkingConfig = { thinkingBudget };
-  }
-
-  const response = await ai.models.generateContent({
-    model,
-    contents: [{ role: 'user', parts }],
-    config,
-  });
-
-  const rawText = response.text ?? '{}';
-  const cleaned = rawText
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/```\s*$/i, '')
-    .trim();
-
-  const parsed = JSON.parse(cleaned) as T;
-  const meta = response.usageMetadata as
-    | {
-        promptTokenCount?: number;
-        candidatesTokenCount?: number;
-        thoughtsTokenCount?: number;
-      }
-    | undefined;
-
-  return {
-    parsed,
-    promptTokens: meta?.promptTokenCount ?? 800,
-    outputTokens: meta?.candidatesTokenCount ?? 1200,
-    thoughtTokens: meta?.thoughtsTokenCount ?? 0,
-  };
 }
 
 function makeUsage(
   action: TokenUsageEntry['action'],
+  taskKey: LlmTaskKey,
+  taskConfig: LlmTaskConfig,
   priority: PriorityTier,
-  model: string,
   promptTokens: number,
   outputTokens: number,
   thoughtTokens: number,
@@ -109,9 +47,11 @@ function makeUsage(
     id: uid('tok'),
     timestamp: Date.now(),
     action,
+    taskKey,
     screenId,
     priority,
-    model,
+    model: taskConfig.model,
+    thinkingLevel: taskConfig.thinkingLevel,
     promptTokens,
     outputTokens,
     thoughtTokens,
@@ -120,87 +60,98 @@ function makeUsage(
 }
 
 // ---------------------------------------------------------------------------
-// 1. Intent & Ambiguity Engine (Multimodal Disambiguation)
+// 1. Intent & Ambiguity Engine (Task: DISAMBIGUATE)
 // ---------------------------------------------------------------------------
 export async function assessPromptAmbiguity(
   prompt: string,
   project: FlowProject,
-  settings: RuntimeSettings
+  settings: RuntimeSettings,
+  signal?: AbortSignal
 ): Promise<GenResult<{ ambiguous: boolean; request: DisambiguationRequest | null }>> {
   const policy = resolveExecutionPolicy(project, settings, null, 'disambiguate');
-  const hasExplicitMention = /@[A-Za-z0-9_-]+/.test(prompt);
-  const isShortOpenFlowPrompt =
-    !hasExplicitMention &&
-    /(design|create|build|new flow|journey|app|onboarding|checkout|dashboard|portal|store)/i.test(
+
+  // Fast local short-circuit: if the prompt contains any @Screen or @Pin-N:vK mention,
+  // it is an explicit targeted refinement — skip network disambiguation immediately!
+  const hasExplicitMention = /@[A-Za-z0-9_:-]+/.test(prompt);
+  if (hasExplicitMention) {
+    return {
+      data: { ambiguous: false, request: null },
+      usage: makeUsage('disambiguate', policy.taskKey, policy.taskConfig, 'supporting', 0, 0, 0),
+      usedMock: !shouldUseLiveGemini(settings),
+    };
+  }
+
+  const looksLikeOpenNewFlow =
+    /(design|create|build|new flow|journey|app|onboarding|portal|store|marketplace)/i.test(
       prompt
-    ) &&
-    prompt.trim().split(/\s+/).length < 22;
+    ) && prompt.trim().split(/\s+/).length < 24;
+
+  if (!looksLikeOpenNewFlow) {
+    return {
+      data: { ambiguous: false, request: null },
+      usage: makeUsage('disambiguate', policy.taskKey, policy.taskConfig, 'supporting', 0, 0, 0),
+      usedMock: !shouldUseLiveGemini(settings),
+    };
+  }
 
   if (shouldUseLiveGemini(settings)) {
-    try {
-      const systemPrompt = `You are the Intent & Ambiguity Engine for Forkcast Studio.
-Decide if a designer's prompt is underspecified (new flow or broad redesign without specific @Screen targets) or clear enough for direct execution.
+    const systemPrompt = `You are the Intent & Ambiguity Engine for Forkcast Studio.
+Given an open-ended UI flow request, output 3 concise visual disambiguation controls so the designer clarifies structure and tone in 3 clicks instead of prose walls.
 Return strict JSON:
 {
   "uncertaintyScore": 0.0-1.0,
   "rationale": "short 1-line explanation of why clarifying saves tokens",
-  "estimatedTokenSavings": 12000,
+  "estimatedTokenSavings": 14000,
   "controls": [
-    { "id": "c1", "kind": "choice-cards", "label": "...", "multiSelect": false, "options": [{ "id": "o1", "title": "...", "subtitle": "...", "badge": "Fast" }], "selectedIds": ["o1"] },
-    { "id": "c2", "kind": "visual-preview", "label": "Visual Direction", "options": [{ "id": "v1", "title": "...", "palette": ["#111827","#F59E0B","#FAF8F5"], "layoutHint": "Editorial Split" }], "selectedId": "v1" },
+    { "id": "c1", "kind": "choice-cards", "label": "Journey Structure", "multiSelect": false, "options": [{ "id": "o1", "title": "...", "subtitle": "...", "badge": "Recommended" }], "selectedIds": ["o1"] },
+    { "id": "c2", "kind": "visual-preview", "label": "Visual Direction", "options": [{ "id": "v1", "title": "...", "palette": ["#111827","#10B981","#FAF8F5"], "layoutHint": "Editorial Split" }], "selectedId": "v1" },
     { "id": "c3", "kind": "slider", "label": "Information Density", "min": 1, "max": 5, "step": 1, "unit": "/5", "value": 3, "minLabel": "Minimal", "maxLabel": "Data-Rich" }
   ]
-}
-If prompt mentions @Screen or @Pin or is a localized edit, set uncertaintyScore <= 0.2 and controls: [].`;
+}`;
 
-      const { parsed, promptTokens, outputTokens, thoughtTokens } = await callGeminiJson<{
-        uncertaintyScore: number;
-        rationale: string;
-        estimatedTokenSavings?: number;
-        controls: DisambiguationRequest['controls'];
-      }>(
-        settings,
-        policy.model,
-        systemPrompt,
-        `Project: ${project.name}. Existing screens: ${Object.values(project.screens)
-          .map((s) => '@' + s.slug)
-          .join(', ')}.\nDesigner prompt: "${prompt}"`
-      );
+    const { parsed, promptTokens, outputTokens, thoughtTokens } = await callGeminiJson<{
+      uncertaintyScore: number;
+      rationale: string;
+      estimatedTokenSavings?: number;
+      controls: DisambiguationRequest['controls'];
+    }>({
+      settings,
+      taskConfig: policy.taskConfig,
+      systemPrompt,
+      userText: `Project: ${project.name}.\nNew flow request: "${prompt}"`,
+      signal,
+    });
 
-      const ambiguous = parsed.uncertaintyScore >= 0.45 && (parsed.controls?.length ?? 0) > 0;
-      return {
-        data: {
-          ambiguous,
-          request: ambiguous
-            ? {
-                id: uid('disambig'),
-                originalPrompt: prompt,
-                uncertaintyScore: parsed.uncertaintyScore,
-                rationale: parsed.rationale,
-                estimatedTokenSavings: parsed.estimatedTokenSavings ?? 14500,
-                controls: parsed.controls,
-                createdAt: Date.now(),
-              }
-            : null,
-        },
-        usage: makeUsage('disambiguate', 'supporting', policy.model, promptTokens, outputTokens, thoughtTokens),
-        usedMock: false,
-      };
-    } catch {
-      // Fall through cleanly to mock
-    }
-  }
-
-  // Deterministic smart mock
-  await new Promise((r) => setTimeout(r, 320));
-  if (!isShortOpenFlowPrompt) {
+    const ambiguous = parsed.uncertaintyScore >= 0.4 && (parsed.controls?.length ?? 0) > 0;
     return {
-      data: { ambiguous: false, request: null },
-      usage: makeUsage('disambiguate', 'supporting', policy.model, 240, 120, 0),
-      usedMock: true,
+      data: {
+        ambiguous,
+        request: ambiguous
+          ? {
+              id: uid('disambig'),
+              originalPrompt: prompt,
+              uncertaintyScore: parsed.uncertaintyScore,
+              rationale: parsed.rationale,
+              estimatedTokenSavings: parsed.estimatedTokenSavings ?? 14500,
+              controls: parsed.controls,
+              createdAt: Date.now(),
+            }
+          : null,
+      },
+      usage: makeUsage(
+        'disambiguate',
+        policy.taskKey,
+        policy.taskConfig,
+        'supporting',
+        promptTokens,
+        outputTokens,
+        thoughtTokens
+      ),
+      usedMock: false,
     };
   }
 
+  await new Promise((r) => setTimeout(r, 250));
   return {
     data: {
       ambiguous: true,
@@ -250,19 +201,19 @@ If prompt mentions @Screen or @Pin or is a localized edit, set uncertaintyScore 
                 id: 'editorial-light',
                 title: 'Warm Editorial',
                 palette: ['#FAF8F5', '#1C1917', '#D97706'],
-                layoutHint: 'Airy cards & crisp serif/sans hierarchy',
+                layoutHint: 'Airy cards & crisp hierarchy',
               },
               {
                 id: 'linear-dark',
                 title: 'Precision Dark',
                 palette: ['#09090B', '#6366F1', '#10B981'],
-                layoutHint: 'High-contrast studio SaaS controls',
+                layoutHint: 'High-contrast SaaS controls',
               },
               {
                 id: 'clinical-clean',
                 title: 'Clean Utility',
                 palette: ['#FFFFFF', '#0F172A', '#2563EB'],
-                layoutHint: 'High-clarity enterprise tables & forms',
+                layoutHint: 'High-clarity tables & forms',
               },
             ],
           },
@@ -278,23 +229,16 @@ If prompt mentions @Screen or @Pin or is a localized edit, set uncertaintyScore 
             minLabel: 'Spacious',
             maxLabel: 'Dense',
           },
-          {
-            id: 'focus-areas',
-            kind: 'chips',
-            label: 'Core Token Focus (65% Budget)',
-            options: ['Onboarding', 'Comparison / Pricing', 'Express Checkout', 'Error Recovery'],
-            selected: ['Comparison / Pricing', 'Express Checkout'],
-          },
         ],
       },
     },
-    usage: makeUsage('disambiguate', 'supporting', policy.model, 310, 290, 0),
+    usage: makeUsage('disambiguate', policy.taskKey, policy.taskConfig, 'supporting', 280, 240, 0),
     usedMock: true,
   };
 }
 
 // ---------------------------------------------------------------------------
-// 2. Refine Existing Screen(s) with Point & Paint + @Mentions (Strict Opt-In)
+// 2. Refine Screen with Versioned Pins & Masks (Tasks: REFINE_CORE / REFINE_SMALL)
 // ---------------------------------------------------------------------------
 export interface RefinementOutput {
   targetScreenId: string;
@@ -302,20 +246,13 @@ export interface RefinementOutput {
   rationale: string;
   html: string;
   resolvedAnnotationIds: string[];
-  addedScreen?: {
-    slug: string;
-    title: string;
-    stage: string;
-    description: string;
-    edgeLabel: string;
-    html: string;
-  };
 }
 
 export async function refineScreenWithAI(
   context: AssembledPromptContext,
   project: FlowProject,
-  settings: RuntimeSettings
+  settings: RuntimeSettings,
+  signal?: AbortSignal
 ): Promise<GenResult<RefinementOutput>> {
   const targetScreen =
     context.targetScreens[0] ??
@@ -328,126 +265,103 @@ export async function refineScreenWithAI(
     targetScreen.variants[0];
 
   if (shouldUseLiveGemini(settings)) {
-    try {
-      const systemPrompt = `You are a Principal Product Designer AI inside Forkcast Studio.
-Refine the target web screen HTML using Tailwind CSS classes based on the designer's directive, opted-in Point/Paint annotations, and connected flow neighbors.
-Preserve data-fc-edge="..." attributes on primary navigation buttons so interactive flow testing stays wired.
-Return strict JSON:
-{
-  "newVariantLabel": "Option — concise 3-4 word title",
-  "rationale": "1 crisp sentence explaining what changed",
-  "html": "<div class=\\"min-h-screen ...\\">...complete Tailwind HTML body...</div>",
-  "resolvedAnnotationIds": ["id1", "id2"]
+    const systemPrompt = `You are a Principal Product Designer AI inside Forkcast Studio.
+Your job is to produce a VISIBLY IMPROVED, production-polished Tailwind CSS HTML iteration of the target screen that directly and unmistakably implements the designer's prompt AND every referenced versioned annotation (@Pin-N:vK / @Mask-N:vK).
+Rules:
+1. Locate the exact DOM element(s) or painted region(s) described in the Versioned Annotations section and apply clear, noticeable visual, structural, and UX improvements matching the requested revision text.
+2. Return the COMPLETE self-contained HTML body markup (starting with <div class="min-h-screen ...">), styled cleanly with Tailwind CSS utility classes.
+3. Preserve existing data-fc-edge="..." attributes on navigation buttons so interactive flow testing stays wired.
+4. Return strict JSON matching the schema.`;
+
+    const userPayload = `Designer Prompt: ${context.prompt}
+Device Preset: ${project.devicePreset} (${project.devicePreset === 'desktop' ? '1280x800' : '390x844'})
+Target Screen: @${targetScreen.slug} — ${targetScreen.title} (${targetScreen.stage})
+Active Variant Being Iterated: "${currentVariant?.label ?? 'Initial'}"
+
+Flow Topology:
+${context.topologySummary}
+
+Connected 1-Hop Neighbors:
+${context.neighborSummaries.join('\n') || 'None'}
+
+Versioned Annotations & Pin Context Passed to AI (${context.includedRefs.length} item(s)):
+${context.formattedAnnotationContext || 'None — execute Designer Prompt directly on Target Screen.'}
+
+Current Screen HTML:
+${
+  currentVariant?.html ||
+  `<div class="min-h-screen bg-[#FAF8F5] p-12"><h1>${targetScreen.title}</h1><p>${targetScreen.description}</p></div>`
 }`;
 
-      const includedAnnText = context.includedAnnotations
-        .map(
-          (a) =>
-            `- [${a.id}] @${a.mentionTag} (${a.kind}, ${a.category}): "${a.comment}"` +
-            (a.elementTarget
-              ? ` | Target element: <${a.elementTarget.tagName}> "${a.elementTarget.textSnippet}" (${a.elementTarget.selector})`
-              : '') +
-            (a.paintTarget
-              ? ` | Painted region box: x=${a.paintTarget.boundingBoxPercent.x}%, y=${a.paintTarget.boundingBoxPercent.y}%, w=${a.paintTarget.boundingBoxPercent.w}%, h=${a.paintTarget.boundingBoxPercent.h}%; intersecting: ${a.paintTarget.intersectingSelectors.join(', ')}`
-              : '')
-        )
-        .join('\n');
-
-      const userPayload = `Designer Directive: ${context.prompt}
-Device Preset: ${project.devicePreset} (${project.devicePreset === 'desktop' ? '1280x800' : '390x844'})
-Target Screen: @${targetScreen.slug} (${targetScreen.title})
-Flow Topology:\n${context.topologySummary}
-Connected Neighbors:\n${context.neighborSummaries.join('\n') || 'None'}
-Opted-In Annotations to Address:\n${includedAnnText || 'None — follow directive directly'}
-Current HTML:\n${currentVariant?.html ?? '<div>Empty</div>'}`;
-
-      const { parsed, promptTokens, outputTokens, thoughtTokens } =
-        await callGeminiJson<Omit<RefinementOutput, 'targetScreenId'>>(
-          settings,
-          policy.model,
-          systemPrompt,
-          userPayload,
-          context.maskImages.map((m) => ({ dataUrl: m.dataUrl })),
-          policy.thinkingBudget
-        );
-
-      return {
-        data: {
-          targetScreenId: targetScreen.id,
-          newVariantLabel: parsed.newVariantLabel || 'AI Refined Option',
-          rationale: parsed.rationale || 'Applied targeted designer feedback.',
-          html: parsed.html || currentVariant.html,
-          resolvedAnnotationIds:
-            parsed.resolvedAnnotationIds?.length > 0
-              ? parsed.resolvedAnnotationIds
-              : context.includedAnnotations.map((a) => a.id),
+    const refineSchema: Schema = {
+      type: Type.OBJECT,
+      properties: {
+        newVariantLabel: { type: Type.STRING },
+        rationale: { type: Type.STRING },
+        html: { type: Type.STRING },
+        resolvedAnnotationIds: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING },
         },
-        usage: makeUsage(
-          'point-paint-refine',
-          policy.tier,
-          policy.model,
-          promptTokens,
-          outputTokens,
-          thoughtTokens,
-          targetScreen.id
-        ),
-        usedMock: false,
-      };
-    } catch {
-      // Fallback gracefully to deterministic visual refinement
-    }
+      },
+      required: ['newVariantLabel', 'rationale', 'html', 'resolvedAnnotationIds'],
+    };
+
+    const { parsed, promptTokens, outputTokens, thoughtTokens } =
+      await callGeminiJson<Omit<RefinementOutput, 'targetScreenId'>>({
+        settings,
+        taskConfig: policy.taskConfig,
+        systemPrompt,
+        userText: userPayload,
+        images: context.maskImages.map((m) => ({ dataUrl: m.dataUrl })),
+        responseSchema: refineSchema,
+        signal,
+      });
+
+    return {
+      data: {
+        targetScreenId: targetScreen.id,
+        newVariantLabel:
+          parsed.newVariantLabel ||
+          `Option ${String.fromCharCode(65 + targetScreen.variants.length)} — AI Iteration`,
+        rationale: parsed.rationale || 'Applied versioned pin feedback and designer directive.',
+        html: parsed.html || currentVariant.html,
+        resolvedAnnotationIds:
+          parsed.resolvedAnnotationIds?.length > 0
+            ? parsed.resolvedAnnotationIds
+            : context.includedRefs.map((r) => r.annotation.id),
+      },
+      usage: makeUsage(
+        'point-paint-refine',
+        policy.taskKey,
+        policy.taskConfig,
+        policy.tier,
+        promptTokens,
+        outputTokens,
+        thoughtTokens,
+        targetScreen.id
+      ),
+      usedMock: false,
+    };
   }
 
-  // Smart Demo/Mock Visual Refinement Engine
-  await new Promise((r) => setTimeout(r, 850));
-  const promptLower = context.prompt.toLowerCase();
-  const includedText = context.includedAnnotations.map((a) => a.comment).join(' ').toLowerCase();
-  const combinedIntent = `${promptLower} ${includedText}`;
+  // Demo Mode fallback
+  await new Promise((r) => setTimeout(r, 700));
+  const combinedIntent = `${context.prompt} ${context.includedRefs
+    .map((r) => r.revision.comment)
+    .join(' ')}`.toLowerCase();
 
   let refinedHtml = currentVariant?.html || '';
-  let label = `Refined v${targetScreen.variants.length + 1}`;
-  let rationale = `Addressed "${context.prompt.slice(0, 68)}"${
-    context.includedAnnotations.length > 0
-      ? ` + ${context.includedAnnotations.length} opted-in annotation(s)`
-      : ''
-  }.`;
+  const nextLetter = String.fromCharCode(65 + targetScreen.variants.length);
+  const refTokens = context.includedRefs.map((r) => r.token).join(', ');
+  let label = `Option ${nextLetter} — Refined`;
+  let rationale = `Applied ${refTokens || 'prompt feedback'} (${context.prompt.slice(0, 72)}).`;
 
   if (!refinedHtml.trim()) {
-    // Expanding skeleton into interactive HTML
     refinedHtml = buildRichMockScreenHtml(targetScreen, combinedIntent);
     label = 'Option A — Expanded Live UI';
-    rationale = 'Progressively expanded skeleton into interactive Tailwind screen.';
-  } else if (
-    combinedIntent.includes('emerald') ||
-    combinedIntent.includes('green') ||
-    combinedIntent.includes('reassurance') ||
-    combinedIntent.includes('cancel') ||
-    targetScreen.id === 'checkout'
-  ) {
-    label = `Option ${String.fromCharCode(65 + targetScreen.variants.length)} — Emerald Trust CTA`;
-    rationale =
-      'Promoted primary Subscribe CTA to high-contrast emerald with inline 1-click cancel reassurance and compact sticky summary.';
-    refinedHtml = refinedHtml
-      .replace(
-        /bg-stone-950 text-white font-bold text-base shadow-lg hover:bg-stone-800/g,
-        'bg-emerald-600 text-white font-bold text-base shadow-xl shadow-emerald-600/25 hover:bg-emerald-500 ring-2 ring-emerald-400/40'
-      )
-      .replace(
-        /Start Subscription · \$31\.00/g,
-        '🔒 Start Subscription · $31.00 — Cancel in 1 Click'
-      );
-    if (!refinedHtml.includes('100% Fresh Roast Guarantee')) {
-      refinedHtml = refinedHtml.replace(
-        '</section>',
-        `<div class="flex items-center justify-between px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 font-medium">
-          <span>✓ 100% Fresh Roast Guarantee · Skip or cancel anytime in 1 click</span>
-          <span class="font-bold">0 lock-in</span>
-        </div></section>`
-      );
-    }
-  } else if (combinedIntent.includes('dark') || combinedIntent.includes('contrast')) {
-    label = `Option ${String.fromCharCode(65 + targetScreen.variants.length)} — Precision Dark`;
-    rationale = 'Transformed surface into high-contrast dark studio palette with crisp accents.';
+  } else if (combinedIntent.includes('dark')) {
+    label = `Option ${nextLetter} — Precision Dark`;
     refinedHtml = refinedHtml
       .replace(/bg-\[#FAF8F5\]/g, 'bg-zinc-950')
       .replace(/bg-white/g, 'bg-zinc-900')
@@ -455,19 +369,21 @@ Current HTML:\n${currentVariant?.html ?? '<div>Empty</div>'}`;
       .replace(/text-stone-950/g, 'text-white')
       .replace(/border-stone-200/g, 'border-zinc-800');
   } else {
-    label = `Option ${String.fromCharCode(65 + targetScreen.variants.length)} — Streamlined Focus`;
-    rationale = `Synthesized cleaner visual hierarchy directly addressing ${
-      context.includedAnnotations.length > 0
-        ? context.includedAnnotations.map((a) => '@' + a.mentionTag).join(', ')
-        : 'prompt intent'
-    }.`;
-    refinedHtml = refinedHtml.replace(
-      '<main',
-      `<div class="bg-violet-600 text-white text-xs font-medium px-12 py-2 flex items-center justify-between">
-        <span>✨ AI Refined Variant · ${context.prompt.slice(0, 72)}</span>
-        <span class="opacity-80">Forkcast Studio</span>
-      </div><main`
-    );
+    label = `Option ${nextLetter} — Emerald Trust Iteration`;
+    refinedHtml = refinedHtml
+      .replace(
+        /bg-stone-950 text-white/g,
+        'bg-emerald-600 text-white ring-2 ring-emerald-400/40 shadow-emerald-600/25'
+      )
+      .replace(
+        '<main',
+        `<div class="bg-emerald-950 text-emerald-200 text-xs font-medium px-12 py-2.5 flex items-center justify-between border-b border-emerald-800">
+          <span>✓ Iterated from ${refTokens || 'Designer Prompt'}: ${
+            context.includedRefs[0]?.revision.comment ?? context.prompt.slice(0, 64)
+          }</span>
+          <span class="font-mono text-[11px] opacity-80">Demo Fallback</span>
+        </div><main`
+      );
   }
 
   return {
@@ -476,15 +392,16 @@ Current HTML:\n${currentVariant?.html ?? '<div>Empty</div>'}`;
       newVariantLabel: label,
       rationale,
       html: refinedHtml,
-      resolvedAnnotationIds: context.includedAnnotations.map((a) => a.id),
+      resolvedAnnotationIds: context.includedRefs.map((r) => r.annotation.id),
     },
     usage: makeUsage(
       'point-paint-refine',
+      policy.taskKey,
+      policy.taskConfig,
       policy.tier,
-      policy.model,
       Math.round(policy.estimatedTokens * 0.42),
       Math.round(policy.estimatedTokens * 0.44),
-      policy.thinkingBudget > 0 ? Math.round(policy.estimatedTokens * 0.14) : 0,
+      policy.thinkingLevel !== 'LOW' ? Math.round(policy.estimatedTokens * 0.14) : 0,
       targetScreen.id
     ),
     usedMock: true,
@@ -492,59 +409,74 @@ Current HTML:\n${currentVariant?.html ?? '<div>Empty</div>'}`;
 }
 
 // ---------------------------------------------------------------------------
-// 3. Explore a New Divergent Alternative for a Screen
+// 3. Explore Variant (Tasks: VARIANT_CORE / VARIANT_STANDARD / VARIANT_SUPPORTING)
 // ---------------------------------------------------------------------------
 export async function generateVariantForScreen(
   screen: ScreenNode,
   project: FlowProject,
   settings: RuntimeSettings,
-  styleHint = 'Explore a distinct layout direction that reduces cognitive load and improves conversion clarity.'
+  styleHint = 'Explore a distinct layout direction that reduces cognitive load and improves conversion clarity.',
+  signal?: AbortSignal
 ): Promise<GenResult<{ label: string; rationale: string; html: string }>> {
   const policy = resolveExecutionPolicy(project, settings, screen, 'generate-variant');
 
   if (shouldUseLiveGemini(settings)) {
-    try {
-      const systemPrompt = `You are an expert UI designer inside Forkcast Studio.
+    const systemPrompt = `You are an expert UI designer inside Forkcast Studio.
 Create ONE genuinely distinct, production-polished Tailwind CSS web screen variant for the given screen node.
-Return strict JSON: { "label": "Option X — 3-word style", "rationale": "1 sentence UX reasoning", "html": "<div class=\\"min-h-screen ...\\">...</div>" }`;
+Return strict JSON matching the schema.`;
 
-      const outEdges = Object.values(project.edges)
-        .filter((e) => e.sourceScreenId === screen.id)
-        .map((e) => `data-fc-edge="${e.id}" for "${e.label}"`)
-        .join(', ');
+    const outEdges = Object.values(project.edges)
+      .filter((e) => e.sourceScreenId === screen.id)
+      .map((e) => `data-fc-edge="${e.id}" for "${e.label}"`)
+      .join(', ');
 
-      const userPayload = `Screen: @${screen.slug} — ${screen.title} (${screen.stage})
+    const userPayload = `Screen: @${screen.slug} — ${screen.title} (${screen.stage})
 Description: ${screen.description}
-Device: ${project.devicePreset}
-Existing option labels (make something clearly different): ${screen.variants.map((v) => v.label).join(', ')}
+Device: ${project.devicePreset} (${project.devicePreset === 'desktop' ? '1280x800' : '390x844'})
+Existing option labels (make something visually distinct): ${screen.variants.map((v) => v.label).join(', ')}
 Wire primary CTA buttons with: ${outEdges || 'standard buttons'}
 Creative direction: ${styleHint}`;
 
-      const { parsed, promptTokens, outputTokens, thoughtTokens } = await callGeminiJson<{
-        label: string;
-        rationale: string;
-        html: string;
-      }>(settings, policy.model, systemPrompt, userPayload, [], policy.thinkingBudget);
+    const variantSchema: Schema = {
+      type: Type.OBJECT,
+      properties: {
+        label: { type: Type.STRING },
+        rationale: { type: Type.STRING },
+        html: { type: Type.STRING },
+      },
+      required: ['label', 'rationale', 'html'],
+    };
 
-      return {
-        data: parsed,
-        usage: makeUsage(
-          'generate-variant',
-          policy.tier,
-          policy.model,
-          promptTokens,
-          outputTokens,
-          thoughtTokens,
-          screen.id
-        ),
-        usedMock: false,
-      };
-    } catch {
-      // Fallback cleanly to rich mock
-    }
+    const { parsed, promptTokens, outputTokens, thoughtTokens } = await callGeminiJson<{
+      label: string;
+      rationale: string;
+      html: string;
+    }>({
+      settings,
+      taskConfig: policy.taskConfig,
+      systemPrompt,
+      userText: userPayload,
+      responseSchema: variantSchema,
+      signal,
+    });
+
+    return {
+      data: parsed,
+      usage: makeUsage(
+        'generate-variant',
+        policy.taskKey,
+        policy.taskConfig,
+        policy.tier,
+        promptTokens,
+        outputTokens,
+        thoughtTokens,
+        screen.id
+      ),
+      usedMock: false,
+    };
   }
 
-  await new Promise((r) => setTimeout(r, 750));
+  await new Promise((r) => setTimeout(r, 650));
   const nextLetter = String.fromCharCode(65 + screen.variants.length);
   return {
     data: {
@@ -557,11 +489,12 @@ Creative direction: ${styleHint}`;
     },
     usage: makeUsage(
       'generate-variant',
+      policy.taskKey,
+      policy.taskConfig,
       policy.tier,
-      policy.model,
       Math.round(policy.estimatedTokens * 0.35),
       Math.round(policy.estimatedTokens * 0.5),
-      policy.thinkingBudget > 0 ? Math.round(policy.estimatedTokens * 0.15) : 0,
+      policy.thinkingLevel !== 'LOW' ? Math.round(policy.estimatedTokens * 0.15) : 0,
       screen.id
     ),
     usedMock: true,
@@ -569,13 +502,14 @@ Creative direction: ${styleHint}`;
 }
 
 // ---------------------------------------------------------------------------
-// 4. Generate a Brand-New User Flow from Prompt + Disambiguation Answers
+// 4. Generate New Flow from Disambiguation (Task: FLOW_ARCHITECT)
 // ---------------------------------------------------------------------------
 export async function generateNewFlowFromDisambiguation(
   prompt: string,
   answersSummary: string,
   project: FlowProject,
-  settings: RuntimeSettings
+  settings: RuntimeSettings,
+  signal?: AbortSignal
 ): Promise<
   GenResult<{
     projectName: string;
@@ -586,131 +520,173 @@ export async function generateNewFlowFromDisambiguation(
   const policy = resolveExecutionPolicy(project, settings, null, 'generate-flow');
 
   if (shouldUseLiveGemini(settings)) {
-    try {
-      const systemPrompt = `You are a Principal UX Architect inside Forkcast Studio.
-Generate a progressive-reveal 4-to-5 screen user flow graph for the product prompt and disambiguation choices.
+    const systemPrompt = `You are a Principal UX Architect inside Forkcast Studio.
+Generate a progressive-reveal 4-screen user flow graph for the product prompt and disambiguation choices.
 Core UX screens get full interactive Tailwind HTML; Supporting screens get skeletonBullets only (Progressive Reveal).
-Return strict JSON:
-{
-  "projectName": "Short Studio Project Title",
-  "screens": [
-    {
-      "id": "s1",
-      "slug": "Landing",
-      "title": "...",
-      "stage": "Entry",
-      "description": "...",
-      "priority": "core" | "standard" | "supporting",
-      "isInFinalFlow": true,
-      "fidelity": "interactive" | "skeleton",
-      "variantLabel": "Option A — ...",
-      "rationale": "...",
-      "html": "<div class=\\"min-h-screen ...\\">...</div>",
-      "skeletonBullets": ["...", "..."]
-    }
-  ],
-  "edges": [
-    { "id": "e1", "sourceScreenId": "s1", "targetScreenId": "s2", "label": "Continue", "edgeType": "primary", "isFinalFlowEdge": true }
-  ]
-}`;
+Return strict JSON matching the schema.`;
 
-      const { parsed, promptTokens, outputTokens, thoughtTokens } = await callGeminiJson<{
-        projectName: string;
-        screens: Array<{
-          id: string;
-          slug: string;
-          title: string;
-          stage: string;
-          description: string;
-          priority: PriorityTier;
-          isInFinalFlow: boolean;
-          fidelity: 'interactive' | 'skeleton';
-          variantLabel: string;
-          rationale: string;
-          html?: string;
-          skeletonBullets?: string[];
-        }>;
-        edges: Array<{
-          id: string;
-          sourceScreenId: string;
-          targetScreenId: string;
-          label: string;
-          edgeType: FlowEdge['edgeType'];
-          isFinalFlowEdge: boolean;
-        }>;
-      }>(
-        settings,
-        policy.model,
-        systemPrompt,
-        `Prompt: ${prompt}\nDisambiguation Choices:\n${answersSummary}\nViewport: ${project.devicePreset}`
-      );
-
-      const screens: Record<string, ScreenNode> = {};
-      const now = Date.now();
-      parsed.screens.forEach((s, idx) => {
-        const varId = uid('var');
-        screens[s.id] = {
-          id: s.id,
-          slug: s.slug.replace(/[^A-Za-z0-9_-]/g, '') || `Screen${idx + 1}`,
-          title: s.title,
-          stage: s.stage,
-          description: s.description,
-          priority: s.priority,
-          policyMode: 'explore',
-          fidelity: s.fidelity,
-          isInFinalFlow: s.isInFinalFlow ?? true,
-          position: { x: 60 + idx * 510, y: s.isInFinalFlow ? 100 : 540 },
-          activeVariantId: varId,
-          finalizedVariantId: varId,
-          annotations: [],
-          evaluation: null,
-          status: 'idle',
-          variants: [
-            {
-              id: varId,
-              label: s.variantLabel || 'Option A — Initial Concept',
-              rationale: s.rationale || 'Generated from disambiguated journey brief.',
-              fidelity: s.fidelity,
-              isHidden: false,
-              html: s.html || '',
-              skeletonBullets: s.skeletonBullets,
-              createdAt: now,
-              modelUsed: policy.model,
-              tokensUsed: Math.round((promptTokens + outputTokens) / Math.max(1, parsed.screens.length)),
-              banditStats: {
-                alpha: 2,
-                beta: 2,
-                impressions: 0,
-                completions: 0,
-                hesitations: 0,
-                backtracks: 0,
-                avgDwellMs: 0,
-              },
+    const flowSchema: Schema = {
+      type: Type.OBJECT,
+      properties: {
+        projectName: { type: Type.STRING },
+        screens: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.STRING },
+              slug: { type: Type.STRING },
+              title: { type: Type.STRING },
+              stage: { type: Type.STRING },
+              description: { type: Type.STRING },
+              priority: { type: Type.STRING },
+              isInFinalFlow: { type: Type.BOOLEAN },
+              fidelity: { type: Type.STRING },
+              variantLabel: { type: Type.STRING },
+              rationale: { type: Type.STRING },
+              html: { type: Type.STRING },
+              skeletonBullets: { type: Type.ARRAY, items: { type: Type.STRING } },
             },
-          ],
-        };
-      });
+            required: ['id', 'slug', 'title', 'stage', 'description', 'priority', 'isInFinalFlow', 'fidelity', 'variantLabel', 'rationale'],
+          },
+        },
+        edges: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.STRING },
+              sourceScreenId: { type: Type.STRING },
+              targetScreenId: { type: Type.STRING },
+              label: { type: Type.STRING },
+              edgeType: { type: Type.STRING },
+              isFinalFlowEdge: { type: Type.BOOLEAN },
+            },
+            required: ['id', 'sourceScreenId', 'targetScreenId', 'label', 'edgeType', 'isFinalFlowEdge'],
+          },
+        },
+      },
+      required: ['projectName', 'screens', 'edges'],
+    };
 
-      const edges: Record<string, FlowEdge> = {};
-      parsed.edges.forEach((e) => {
-        edges[e.id] = {
-          ...e,
-          metrics: { traversals: 0, completions: 0, backtracks: 0 },
-        };
-      });
+    const { parsed, promptTokens, outputTokens, thoughtTokens } = await callGeminiJson<{
+      projectName: string;
+      screens: Array<{
+        id: string;
+        slug: string;
+        title: string;
+        stage: string;
+        description: string;
+        priority: PriorityTier;
+        isInFinalFlow: boolean;
+        fidelity: 'interactive' | 'skeleton';
+        variantLabel: string;
+        rationale: string;
+        html?: string;
+        skeletonBullets?: string[];
+      }>;
+      edges: Array<{
+        id: string;
+        sourceScreenId: string;
+        targetScreenId: string;
+        label: string;
+        edgeType: FlowEdge['edgeType'];
+        isFinalFlowEdge: boolean;
+      }>;
+    }>({
+      settings,
+      taskConfig: policy.taskConfig,
+      systemPrompt,
+      userText: `Prompt: ${prompt}\nDisambiguation Choices:\n${answersSummary}\nViewport: ${project.devicePreset}`,
+      responseSchema: flowSchema,
+      signal,
+    });
 
-      return {
-        data: { projectName: parsed.projectName || 'Generated Studio Flow', screens, edges },
-        usage: makeUsage('generate-flow', 'core', policy.model, promptTokens, outputTokens, thoughtTokens),
-        usedMock: false,
+    const screens: Record<string, ScreenNode> = {};
+    const now = Date.now();
+    parsed.screens.forEach((s, idx) => {
+      const varId = uid('var');
+      const prio: PriorityTier =
+        s.priority === 'core' || s.priority === 'standard' || s.priority === 'supporting'
+          ? s.priority
+          : 'standard';
+      const fid = s.fidelity === 'skeleton' ? 'skeleton' : 'interactive';
+      screens[s.id] = {
+        id: s.id,
+        slug: s.slug.replace(/[^A-Za-z0-9_-]/g, '') || `Screen${idx + 1}`,
+        title: s.title,
+        stage: s.stage,
+        description: s.description,
+        priority: prio,
+        policyMode: 'explore',
+        fidelity: fid,
+        isInFinalFlow: s.isInFinalFlow ?? true,
+        position: { x: 60 + idx * 510, y: s.isInFinalFlow ? 100 : 540 },
+        activeVariantId: varId,
+        finalizedVariantId: varId,
+        annotations: [],
+        evaluation: null,
+        status: 'idle',
+        variants: [
+          {
+            id: varId,
+            label: s.variantLabel || 'Option A — Initial Concept',
+            rationale: s.rationale || 'Generated from disambiguated journey brief.',
+            fidelity: fid,
+            isHidden: false,
+            html: s.html || '',
+            skeletonBullets: s.skeletonBullets,
+            createdAt: now,
+            modelUsed: policy.model,
+            tokensUsed: Math.round(
+              (promptTokens + outputTokens) / Math.max(1, parsed.screens.length)
+            ),
+            banditStats: {
+              alpha: 2,
+              beta: 2,
+              impressions: 0,
+              completions: 0,
+              hesitations: 0,
+              backtracks: 0,
+              avgDwellMs: 0,
+            },
+          },
+        ],
       };
-    } catch {
-      // Fallback to crisp mock flow
-    }
+    });
+
+    const edges: Record<string, FlowEdge> = {};
+    parsed.edges.forEach((e) => {
+      edges[e.id] = {
+        ...e,
+        edgeType:
+          e.edgeType === 'primary' ||
+          e.edgeType === 'alternate' ||
+          e.edgeType === 'error' ||
+          e.edgeType === 'back'
+            ? e.edgeType
+            : 'primary',
+        metrics: { traversals: 0, completions: 0, backtracks: 0 },
+      };
+    });
+
+    return {
+      data: { projectName: parsed.projectName || 'Generated Studio Flow', screens, edges },
+      usage: makeUsage(
+        'generate-flow',
+        policy.taskKey,
+        policy.taskConfig,
+        'core',
+        promptTokens,
+        outputTokens,
+        thoughtTokens
+      ),
+      usedMock: false,
+    };
   }
 
-  // Deterministic Mock Progressive Flow Generator
-  await new Promise((r) => setTimeout(r, 900));
+  // Demo Mode Flow Generation
+  await new Promise((r) => setTimeout(r, 750));
   const cleanTitle = prompt.trim().slice(0, 40) || 'Custom Product Flow';
   const now = Date.now();
   const s1: ScreenNode = {
@@ -742,7 +718,7 @@ Return strict JSON:
           'e-entry-core'
         ),
         createdAt: now,
-        modelUsed: settings.models.standard,
+        modelUsed: settings.llmTasks.VARIANT_STANDARD.model,
         tokensUsed: 2400,
         banditStats: { alpha: 3, beta: 1.5, impressions: 0, completions: 0, hesitations: 0, backtracks: 0, avgDwellMs: 0 },
       },
@@ -754,7 +730,7 @@ Return strict JSON:
     slug: 'CoreAction',
     title: 'Core Configuration & Options',
     stage: 'Core UX Focus',
-    description: `High-impact interactive workspace / selection step for ${prompt}`,
+    description: `High-impact interactive step for ${prompt}`,
     priority: 'core',
     policyMode: 'explore',
     fidelity: 'interactive',
@@ -775,79 +751,27 @@ Return strict JSON:
         html: buildRichMockScreenHtml(
           { title: 'Core Selection & Config', slug: 'CoreAction', stage: 'Core UX Focus', description: prompt } as ScreenNode,
           answersSummary,
-          'e-core-commit'
+          'e-core-done'
         ),
         createdAt: now,
-        modelUsed: settings.models.core,
+        modelUsed: settings.llmTasks.VARIANT_CORE.model,
         tokensUsed: 4100,
         banditStats: { alpha: 3, beta: 2, impressions: 0, completions: 0, hesitations: 0, backtracks: 0, avgDwellMs: 0 },
-      },
-      {
-        id: 'gen-core-b',
-        label: 'Option B — Split Live Preview',
-        rationale: 'Alternative side-by-side live summary layout for comparison.',
-        fidelity: 'interactive',
-        isHidden: false,
-        html: buildRichMockScreenHtml(
-          { title: 'Live Split Builder', slug: 'CoreAction', stage: 'Core UX Focus', description: prompt } as ScreenNode,
-          'dark contrast',
-          'e-core-commit'
-        ),
-        createdAt: now,
-        modelUsed: settings.models.core,
-        tokensUsed: 3800,
-        banditStats: { alpha: 2.5, beta: 2, impressions: 0, completions: 0, hesitations: 0, backtracks: 0, avgDwellMs: 0 },
       },
     ],
   };
 
   const s3: ScreenNode = {
-    id: 'gen-commit',
-    slug: 'Commit',
-    title: 'Review & Express Confirm',
-    stage: 'Conversion',
-    description: 'High-trust summary and 1-click commitment step.',
-    priority: 'core',
-    policyMode: 'explore',
-    fidelity: 'interactive',
-    isInFinalFlow: true,
-    position: { x: 1100, y: 110 },
-    activeVariantId: 'gen-commit-a',
-    finalizedVariantId: 'gen-commit-a',
-    annotations: [],
-    evaluation: null,
-    status: 'idle',
-    variants: [
-      {
-        id: 'gen-commit-a',
-        label: 'Option A — Trust Summary',
-        rationale: 'Transparent summary with zero-surprise reassurance.',
-        fidelity: 'interactive',
-        isHidden: false,
-        html: buildRichMockScreenHtml(
-          { title: 'Review & Confirm', slug: 'Commit', stage: 'Conversion', description: prompt } as ScreenNode,
-          answersSummary,
-          'e-commit-done'
-        ),
-        createdAt: now,
-        modelUsed: settings.models.core,
-        tokensUsed: 3900,
-        banditStats: { alpha: 2.8, beta: 2.1, impressions: 0, completions: 0, hesitations: 0, backtracks: 0, avgDwellMs: 0 },
-      },
-    ],
-  };
-
-  const s4: ScreenNode = {
     id: 'gen-done',
     slug: 'Success',
     title: 'Confirmation & Next Steps',
     stage: 'Post-Action',
-    description: 'Kept as progressive skeleton to conserve Core Focus token spend.',
+    description: 'Progressive skeleton conserving Core Focus token spend.',
     priority: 'supporting',
     policyMode: 'explore',
     fidelity: 'skeleton',
     isInFinalFlow: true,
-    position: { x: 1620, y: 110 },
+    position: { x: 1100, y: 110 },
     activeVariantId: 'gen-done-skel',
     finalizedVariantId: 'gen-done-skel',
     annotations: [],
@@ -867,61 +791,51 @@ Return strict JSON:
           'Primary return CTA + share/invite secondary action',
         ],
         createdAt: now,
-        modelUsed: settings.models.supporting,
+        modelUsed: settings.llmTasks.VARIANT_SUPPORTING.model,
         tokensUsed: 620,
         banditStats: { alpha: 4, beta: 1, impressions: 0, completions: 0, hesitations: 0, backtracks: 0, avgDwellMs: 0 },
       },
     ],
   };
 
-  const edges: Record<string, FlowEdge> = {
-    'e-entry-core': {
-      id: 'e-entry-core',
-      sourceScreenId: 'gen-entry',
-      targetScreenId: 'gen-core',
-      label: 'Get Started',
-      edgeType: 'primary',
-      isFinalFlowEdge: true,
-      metrics: { traversals: 0, completions: 0, backtracks: 0 },
-    },
-    'e-core-commit': {
-      id: 'e-core-commit',
-      sourceScreenId: 'gen-core',
-      targetScreenId: 'gen-commit',
-      label: 'Continue to Review',
-      edgeType: 'primary',
-      isFinalFlowEdge: true,
-      metrics: { traversals: 0, completions: 0, backtracks: 0 },
-    },
-    'e-commit-done': {
-      id: 'e-commit-done',
-      sourceScreenId: 'gen-commit',
-      targetScreenId: 'gen-done',
-      label: 'Confirm & Complete',
-      edgeType: 'primary',
-      isFinalFlowEdge: true,
-      metrics: { traversals: 0, completions: 0, backtracks: 0 },
-    },
-  };
-
   return {
     data: {
       projectName: cleanTitle,
-      screens: { [s1.id]: s1, [s2.id]: s2, [s3.id]: s3, [s4.id]: s4 },
-      edges,
+      screens: { [s1.id]: s1, [s2.id]: s2, [s3.id]: s3 },
+      edges: {
+        'e-entry-core': {
+          id: 'e-entry-core',
+          sourceScreenId: 'gen-entry',
+          targetScreenId: 'gen-core',
+          label: 'Get Started',
+          edgeType: 'primary',
+          isFinalFlowEdge: true,
+          metrics: { traversals: 0, completions: 0, backtracks: 0 },
+        },
+        'e-core-done': {
+          id: 'e-core-done',
+          sourceScreenId: 'gen-core',
+          targetScreenId: 'gen-done',
+          label: 'Complete',
+          edgeType: 'primary',
+          isFinalFlowEdge: true,
+          metrics: { traversals: 0, completions: 0, backtracks: 0 },
+        },
+      },
     },
-    usage: makeUsage('generate-flow', 'core', settings.models.core, 1950, 4200, 850),
+    usage: makeUsage('generate-flow', policy.taskKey, policy.taskConfig, 'core', 1800, 3600, 750),
     usedMock: true,
   };
 }
 
 // ---------------------------------------------------------------------------
-// 5. Multimodal UX Evaluator (Screen Craft + Cross-Screen Continuity Pins)
+// 5. Multimodal UX Evaluator (Tasks: UX_EVAL_CORE / UX_EVAL_LIGHT)
 // ---------------------------------------------------------------------------
 export async function evaluateScreenWithAI(
   screen: ScreenNode,
   project: FlowProject,
-  settings: RuntimeSettings
+  settings: RuntimeSettings,
+  signal?: AbortSignal
 ): Promise<
   GenResult<{
     report: EvaluationReport;
@@ -937,97 +851,125 @@ export async function evaluateScreenWithAI(
   );
 
   if (shouldUseLiveGemini(settings) && active?.html) {
-    try {
-      const systemPrompt = `You are a Staff UX Researcher & Design Critic inside Forkcast Studio.
+    const systemPrompt = `You are a Staff UX Researcher & Design Critic inside Forkcast Studio.
 Evaluate the screen HTML for usability, visualHierarchy, accessibility, and flowContinuity across connected edges.
-Return strict JSON:
-{
-  "overallScore": 0-100,
-  "dimensions": { "usability": 0-100, "visualHierarchy": 0-100, "accessibility": 0-100, "flowContinuity": 0-100 },
-  "summary": "2 crisp actionable sentences",
-  "pins": [
-    {
-      "xPercent": 15-85,
-      "yPercent": 15-85,
-      "category": "usability" | "hierarchy" | "copy" | "accessibility" | "layout" | "flow",
-      "severity": "info" | "warning" | "critical",
-      "selector": "css selector or button description",
-      "tagName": "button",
-      "textSnippet": "short element label",
-      "comment": "concise specific UX fix"
-    }
-  ]
-}`;
+Return strict JSON matching the schema.`;
 
-      const userPayload = `Screen: @${screen.slug} (${screen.title})
+    const evalSchema: Schema = {
+      type: Type.OBJECT,
+      properties: {
+        overallScore: { type: Type.NUMBER },
+        dimensions: {
+          type: Type.OBJECT,
+          properties: {
+            usability: { type: Type.NUMBER },
+            visualHierarchy: { type: Type.NUMBER },
+            accessibility: { type: Type.NUMBER },
+            flowContinuity: { type: Type.NUMBER },
+          },
+          required: ['usability', 'visualHierarchy', 'accessibility', 'flowContinuity'],
+        },
+        summary: { type: Type.STRING },
+        pins: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              xPercent: { type: Type.NUMBER },
+              yPercent: { type: Type.NUMBER },
+              category: { type: Type.STRING },
+              severity: { type: Type.STRING },
+              selector: { type: Type.STRING },
+              tagName: { type: Type.STRING },
+              textSnippet: { type: Type.STRING },
+              comment: { type: Type.STRING },
+            },
+            required: ['xPercent', 'yPercent', 'category', 'severity', 'selector', 'tagName', 'textSnippet', 'comment'],
+          },
+        },
+      },
+      required: ['overallScore', 'dimensions', 'summary', 'pins'],
+    };
+
+    const userPayload = `Screen: @${screen.slug} (${screen.title})
 Connected transitions: ${connectedEdges.map((e) => `${e.sourceScreenId} --(${e.label})--> ${e.targetScreenId}`).join(' | ')}
 HTML:\n${active.html}`;
 
-      const { parsed, promptTokens, outputTokens, thoughtTokens } = await callGeminiJson<{
-        overallScore: number;
-        dimensions: EvaluationReport['dimensions'];
-        summary: string;
-        pins: Array<{
-          xPercent: number;
-          yPercent: number;
-          category: AnnotationCategory;
-          severity: 'info' | 'warning' | 'critical';
-          selector: string;
-          tagName: string;
-          textSnippet: string;
-          comment: string;
-        }>;
-      }>(settings, policy.model, systemPrompt, userPayload, [], policy.thinkingBudget);
+    const { parsed, promptTokens, outputTokens, thoughtTokens } = await callGeminiJson<{
+      overallScore: number;
+      dimensions: EvaluationReport['dimensions'];
+      summary: string;
+      pins: Array<{
+        xPercent: number;
+        yPercent: number;
+        category: AnnotationCategory;
+        severity: 'info' | 'warning' | 'critical';
+        selector: string;
+        tagName: string;
+        textSnippet: string;
+        comment: string;
+      }>;
+    }>({
+      settings,
+      taskConfig: policy.taskConfig,
+      systemPrompt,
+      userText: userPayload,
+      responseSchema: evalSchema,
+      signal,
+    });
 
-      return {
-        data: {
-          report: {
-            overallScore: parsed.overallScore,
-            dimensions: parsed.dimensions,
-            summary: parsed.summary,
-            modelUsed: policy.model,
-            tokensUsed: promptTokens + outputTokens + thoughtTokens,
-            evaluatedAt: Date.now(),
+    const validCategories = new Set(['usability', 'hierarchy', 'copy', 'accessibility', 'layout', 'flow']);
+    return {
+      data: {
+        report: {
+          overallScore: Math.round(parsed.overallScore),
+          dimensions: {
+            usability: Math.round(parsed.dimensions.usability),
+            visualHierarchy: Math.round(parsed.dimensions.visualHierarchy),
+            accessibility: Math.round(parsed.dimensions.accessibility),
+            flowContinuity: Math.round(parsed.dimensions.flowContinuity),
           },
-          aiPins: (parsed.pins ?? []).slice(0, 2).map((p) => ({
-            screenId: screen.id,
-            variantId: active.id,
-            author: 'ai-evaluator' as const,
-            kind: 'point-element' as const,
-            includeInAiFeedback: true,
-            xPercent: Math.min(90, Math.max(10, p.xPercent)),
-            yPercent: Math.min(90, Math.max(10, p.yPercent)),
-            elementTarget: {
-              selector: p.selector || 'main button',
-              tagName: p.tagName || 'button',
-              textSnippet: p.textSnippet || 'Target UI element',
-              boundingBox: { x: 100, y: 100, w: 200, h: 48 },
-            },
-            category: p.category || 'usability',
-            severity: p.severity || 'warning',
-            comment: p.comment,
-            status: 'open' as const,
-          })),
+          summary: parsed.summary,
+          modelUsed: policy.model,
+          tokensUsed: promptTokens + outputTokens + thoughtTokens,
+          evaluatedAt: Date.now(),
         },
-        usage: makeUsage(
-          'ux-eval',
-          policy.tier,
-          policy.model,
-          promptTokens,
-          outputTokens,
-          thoughtTokens,
-          screen.id
-        ),
-        usedMock: false,
-      };
-    } catch {
-      // Fall back cleanly
-    }
+        aiPins: (parsed.pins ?? []).slice(0, 2).map((p) => ({
+          screenId: screen.id,
+          variantId: active.id,
+          author: 'ai-evaluator' as const,
+          kind: 'point-element' as const,
+          includeInAiFeedback: true,
+          xPercent: Math.min(90, Math.max(10, Math.round(p.xPercent))),
+          yPercent: Math.min(90, Math.max(10, Math.round(p.yPercent))),
+          elementTarget: {
+            selector: p.selector || 'main button',
+            tagName: p.tagName || 'button',
+            textSnippet: p.textSnippet || 'Target UI element',
+            boundingBox: { x: 100, y: 100, w: 200, h: 48 },
+          },
+          category: (validCategories.has(p.category) ? p.category : 'usability') as AnnotationCategory,
+          severity: p.severity === 'critical' || p.severity === 'info' ? p.severity : 'warning',
+          comment: p.comment,
+          status: 'open' as const,
+        })),
+      },
+      usage: makeUsage(
+        'ux-eval',
+        policy.taskKey,
+        policy.taskConfig,
+        policy.tier,
+        promptTokens,
+        outputTokens,
+        thoughtTokens,
+        screen.id
+      ),
+      usedMock: false,
+    };
   }
 
-  await new Promise((r) => setTimeout(r, 650));
-  const hasTrustUpgrade = active?.html.includes('100% Fresh Roast Guarantee') || active?.html.includes('bg-emerald-600');
-  const baseScore = hasTrustUpgrade ? 91 : screen.id === 'checkout' ? 75 : 85;
+  await new Promise((r) => setTimeout(r, 550));
+  const baseScore = screen.id === 'checkout' ? 76 : 86;
   const totalTok = policy.estimatedTokens;
 
   return {
@@ -1038,47 +980,191 @@ HTML:\n${active.html}`;
           usability: Math.min(98, baseScore + 3),
           visualHierarchy: Math.min(96, baseScore + 1),
           accessibility: Math.min(95, baseScore - 1),
-          flowContinuity: Math.min(96, hasTrustUpgrade ? 92 : baseScore - 3),
+          flowContinuity: Math.min(96, baseScore - 3),
         },
-        summary: hasTrustUpgrade
-          ? 'Strong visual hierarchy and clear reassurance directly adjacent to the commitment CTA. Continuity with upstream plan selection is seamless.'
-          : `Good structural clarity on @${screen.slug}, but primary action contrast and carry-over context from connected upstream screen can be tightened.`,
+        summary: `Good structural clarity on @${screen.slug}; primary action contrast and upstream continuity can be tightened.`,
         modelUsed: policy.model,
         tokensUsed: totalTok,
         evaluatedAt: Date.now(),
       },
-      aiPins: hasTrustUpgrade
-        ? []
-        : [
-            {
-              screenId: screen.id,
-              variantId: active?.id ?? '',
-              author: 'ai-evaluator',
-              kind: 'point-element',
-              includeInAiFeedback: true,
-              xPercent: 62,
-              yPercent: 28,
-              elementTarget: {
-                selector: 'main h1, main h2',
-                tagName: 'h2',
-                textSnippet: screen.title,
-                boundingBox: { x: 120, y: 140, w: 320, h: 40 },
-              },
-              category: 'flow',
-              severity: screen.id === 'checkout' ? 'critical' : 'warning',
-              comment: `Continuity check: reinforce the user's prior choice from upstream screen directly in the @${screen.slug} header to reduce backtracking.`,
-              status: 'open',
-            },
-          ],
+      aiPins: [
+        {
+          screenId: screen.id,
+          variantId: active?.id ?? '',
+          author: 'ai-evaluator',
+          kind: 'point-element',
+          includeInAiFeedback: true,
+          xPercent: 60,
+          yPercent: 30,
+          elementTarget: {
+            selector: 'main h1, main h2',
+            tagName: 'h2',
+            textSnippet: screen.title,
+            boundingBox: { x: 120, y: 140, w: 320, h: 40 },
+          },
+          category: 'flow',
+          severity: 'warning',
+          comment: `Reinforce the upstream selection directly in @${screen.slug} header to reduce backtracking.`,
+          status: 'open',
+        },
+      ],
     },
     usage: makeUsage(
       'ux-eval',
+      policy.taskKey,
+      policy.taskConfig,
       policy.tier,
-      policy.model,
       Math.round(totalTok * 0.55),
       Math.round(totalTok * 0.35),
-      policy.thinkingBudget > 0 ? Math.round(totalTok * 0.1) : 0,
+      policy.thinkingLevel !== 'LOW' ? Math.round(totalTok * 0.1) : 0,
       screen.id
+    ),
+    usedMock: true,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 6. Simulated Persona Traversals (Task: PERSONA_SIM)
+// ---------------------------------------------------------------------------
+export async function simulatePersonasWithAI(
+  project: FlowProject,
+  settings: RuntimeSettings,
+  signal?: AbortSignal
+): Promise<GenResult<TraversalTrace[]>> {
+  const policy = resolveExecutionPolicy(project, settings, null, 'simulate-personas');
+
+  if (shouldUseLiveGemini(settings)) {
+    const systemPrompt = `You are a UX Behavioral Simulator inside Forkcast Studio.
+Simulate 4 diverse user personas walking through the given UI flow graph. Estimate realistic dwellMs, deadClicks, hesitated, backtracked, and completed outcomes.
+Use ONLY valid screenId, variantId, and edgeId values from the input. Return strict JSON.`;
+
+    const personaSchema: Schema = {
+      type: Type.OBJECT,
+      properties: {
+        traces: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              personaLabel: { type: Type.STRING },
+              completed: { type: Type.BOOLEAN },
+              steps: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    screenId: { type: Type.STRING },
+                    variantId: { type: Type.STRING },
+                    edgeIdTaken: { type: Type.STRING },
+                    dwellMs: { type: Type.NUMBER },
+                    deadClicks: { type: Type.NUMBER },
+                    hesitated: { type: Type.BOOLEAN },
+                    backtracked: { type: Type.BOOLEAN },
+                  },
+                  required: ['screenId', 'variantId', 'dwellMs', 'deadClicks', 'hesitated', 'backtracked'],
+                },
+              },
+            },
+            required: ['personaLabel', 'completed', 'steps'],
+          },
+        },
+      },
+      required: ['traces'],
+    };
+
+    const screenSummary = Object.values(project.screens)
+      .map((s) => {
+        const active = s.variants.find((v) => v.id === s.activeVariantId) ?? s.variants[0];
+        const issues = s.annotations
+          .filter((a) => a.status === 'open')
+          .map((a) => a.comment)
+          .join('; ');
+        return `Screen id="${s.id}" (@${s.slug}), activeVariantId="${active?.id ?? ''}", uxScore=${
+          s.evaluation?.overallScore ?? 'n/a'
+        }, openIssues="${issues || 'none'}"`;
+      })
+      .join('\n');
+
+    const edgeSummary = Object.values(project.edges)
+      .map(
+        (e) =>
+          `Edge id="${e.id}": ${e.sourceScreenId} --(${e.label}, type=${e.edgeType}, final=${e.isFinalFlowEdge})--> ${e.targetScreenId}`
+      )
+      .join('\n');
+
+    const { parsed, promptTokens, outputTokens, thoughtTokens } = await callGeminiJson<{
+      traces: Array<{
+        personaLabel: string;
+        completed: boolean;
+        steps: Array<{
+          screenId: string;
+          variantId: string;
+          edgeIdTaken?: string;
+          dwellMs: number;
+          deadClicks: number;
+          hesitated: boolean;
+          backtracked: boolean;
+        }>;
+      }>;
+    }>({
+      settings,
+      taskConfig: policy.taskConfig,
+      systemPrompt,
+      userText: `Screens:\n${screenSummary}\n\nEdges:\n${edgeSummary}`,
+      responseSchema: personaSchema,
+      signal,
+    });
+
+    const now = Date.now();
+    const validTraces: TraversalTrace[] = (parsed.traces ?? [])
+      .map((t, idx) => ({
+        id: uid(`trace-ai-${idx}`),
+        actor: 'simulated-persona' as const,
+        personaLabel: t.personaLabel || `Persona ${idx + 1}`,
+        startedAt: now - (4 - idx) * 12000,
+        completed: Boolean(t.completed),
+        steps: (t.steps ?? [])
+          .filter((st) => Boolean(project.screens[st.screenId]))
+          .map((st) => ({
+            screenId: st.screenId,
+            variantId: st.variantId || project.screens[st.screenId]?.activeVariantId || '',
+            edgeIdTaken:
+              st.edgeIdTaken && project.edges[st.edgeIdTaken] ? st.edgeIdTaken : undefined,
+            enteredAt: now,
+            dwellMs: Math.max(1200, Math.min(30000, Math.round(Number(st.dwellMs) || 5000))),
+            deadClicks: Math.max(0, Math.min(6, Math.round(Number(st.deadClicks) || 0))),
+            hesitated: Boolean(st.hesitated),
+            backtracked: Boolean(st.backtracked),
+          })),
+      }))
+      .filter((t) => t.steps.length > 0);
+
+    return {
+      data: validTraces.length > 0 ? validTraces : runSimulatedPersonas(project),
+      usage: makeUsage(
+        'simulate-personas',
+        policy.taskKey,
+        policy.taskConfig,
+        'standard',
+        promptTokens,
+        outputTokens,
+        thoughtTokens
+      ),
+      usedMock: false,
+    };
+  }
+
+  const traces = runSimulatedPersonas(project);
+  return {
+    data: traces,
+    usage: makeUsage(
+      'simulate-personas',
+      policy.taskKey,
+      policy.taskConfig,
+      'standard',
+      1120,
+      840,
+      policy.thinkingLevel !== 'LOW' ? 220 : 0
     ),
     usedMock: true,
   };
@@ -1135,10 +1221,6 @@ function buildRichMockScreenHtml(
       <div class="h-36 rounded-2xl bg-gradient-to-br from-emerald-500/20 via-violet-500/20 to-amber-500/20 border ${isDark ? 'border-zinc-800' : 'border-stone-200'} p-5 flex flex-col justify-end">
         <div class="font-bold text-lg">Ready in 1 click</div>
         <div class="text-xs ${muted}">Synced with Final Flow continuity contract</div>
-      </div>
-      <div class="space-y-2 text-sm ${muted}">
-        <div class="flex justify-between"><span>Clarity Score</span><span class="font-semibold text-emerald-500">94%</span></div>
-        <div class="flex justify-between"><span>Estimated Time</span><span class="font-semibold">~18 sec</span></div>
       </div>
     </aside>
   </main>

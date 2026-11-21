@@ -1,106 +1,46 @@
-import type {
-  FlowProject,
-  ScreenAnnotation,
-  ScreenNode,
-} from '../types/studio';
-
-export interface ParsedMentions {
-  screenIds: string[];
-  annotationIds: string[];
-  zoneIds: string[];
-  rawTokens: string[];
-}
+import type { FlowProject, ScreenNode } from '../types/studio';
+import {
+  resolvePromptReferences,
+  type ResolvedAnnotationReference,
+  type ResolvedPromptReferences,
+} from '../domain/references';
 
 export interface AssembledPromptContext {
   prompt: string;
-  mentions: ParsedMentions;
+  resolved: ResolvedPromptReferences;
   targetScreens: ScreenNode[];
-  includedAnnotations: ScreenAnnotation[];
+  includedRefs: ResolvedAnnotationReference[];
   excludedAnnotationCount: number;
   topologySummary: string;
   neighborSummaries: string[];
-  maskImages: Array<{ mentionTag: string; screenSlug: string; dataUrl: string }>;
+  formattedAnnotationContext: string;
+  maskImages: Array<{ token: string; screenSlug: string; dataUrl: string }>;
 }
 
 /**
- * Parses @ScreenSlug, @Pin-N, @Mask-N, and @ZoneName references from a designer prompt.
- */
-export function parsePromptMentions(prompt: string, project: FlowProject): ParsedMentions {
-  const matches = prompt.match(/@([A-Za-z0-9_-]+)/g) ?? [];
-  const rawTokens = matches.map((m) => m.slice(1));
-
-  const screenIds = new Set<string>();
-  const annotationIds = new Set<string>();
-  const zoneIds = new Set<string>();
-
-  for (const token of rawTokens) {
-    const lower = token.toLowerCase();
-
-    for (const screen of Object.values(project.screens)) {
-      if (screen.slug.toLowerCase() === lower || screen.id.toLowerCase() === lower) {
-        screenIds.add(screen.id);
-      }
-      for (const ann of screen.annotations) {
-        if (ann.mentionTag.toLowerCase() === lower) {
-          annotationIds.add(ann.id);
-          screenIds.add(screen.id);
-        }
-      }
-    }
-
-    for (const zone of Object.values(project.focusZones)) {
-      const zoneSlug = zone.name.replace(/\s+/g, '').toLowerCase();
-      if (zoneSlug === lower || zone.id.toLowerCase() === lower) {
-        zoneIds.add(zone.id);
-        zone.screenIds.forEach((sid) => screenIds.add(sid));
-      }
-    }
-  }
-
-  return {
-    screenIds: Array.from(screenIds),
-    annotationIds: Array.from(annotationIds),
-    zoneIds: Array.from(zoneIds),
-    rawTokens,
-  };
-}
-
-/**
- * Builds a token-efficient multimodal context payload for Gemini.
- * Strictly enforces `includeInAiFeedback === true` on annotations.
+ * Builds a complete, version-accurate multimodal context payload for Gemini 4.
+ * - Resolves versioned mentions (`@Pin-2:v1`, `@Pin-1:v2`, `@Mask-1:v1`, `@Checkout`)
+ * - Guarantees EVERY explicitly @mentioned pin/version is passed to Gemini 4 with its exact revision comment,
+ *   DOM element target, coordinates, and revision history.
+ * - Includes unmentioned open annotations on target screens strictly when `includeInAiFeedback === true`.
  */
 export function buildMultimodalContext(
   prompt: string,
   project: FlowProject,
-  fallbackScreenId?: string | null
+  fallbackScreenId?: string | null,
+  detachedKeys?: ReadonlySet<string>
 ): AssembledPromptContext {
-  const mentions = parsePromptMentions(prompt, project);
+  const resolved = resolvePromptReferences(
+    prompt,
+    project,
+    fallbackScreenId,
+    detachedKeys
+  );
+  const { targetScreens, effectiveAnnotations, excludedAnnotations } = resolved;
 
-  const targetIds = new Set<string>(mentions.screenIds);
-  if (targetIds.size === 0 && fallbackScreenId && project.screens[fallbackScreenId]) {
-    targetIds.add(fallbackScreenId);
-  }
+  const targetIds = new Set(targetScreens.map((s) => s.id));
 
-  const targetScreens = Array.from(targetIds)
-    .map((id) => project.screens[id])
-    .filter(Boolean);
-
-  // Strict opt-in filter: only send annotations where includeInAiFeedback === true & status === 'open'
-  const includedAnnotations: ScreenAnnotation[] = [];
-  let excludedAnnotationCount = 0;
-
-  for (const screen of targetScreens) {
-    for (const ann of screen.annotations) {
-      if (ann.status !== 'open') continue;
-      if (ann.includeInAiFeedback) {
-        includedAnnotations.push(ann);
-      } else {
-        excludedAnnotationCount += 1;
-      }
-    }
-  }
-
-  // Compact full-graph topology
+  // Full graph topology summary
   const topologyLines: string[] = [];
   for (const screen of Object.values(project.screens)) {
     const outEdges = Object.values(project.edges)
@@ -114,7 +54,7 @@ export function buildMultimodalContext(
     );
   }
 
-  // 1-hop upstream/downstream neighbors of target screens
+  // 1-hop upstream/downstream neighbors
   const neighborIds = new Set<string>();
   for (const edge of Object.values(project.edges)) {
     if (targetIds.has(edge.sourceScreenId) && !targetIds.has(edge.targetScreenId)) {
@@ -136,23 +76,45 @@ export function buildMultimodalContext(
       return `@${s.slug} (${s.title}, ${s.stage}): ${s.description}. Active option: "${active?.label ?? 'none'}"`;
     });
 
-  // Collect painted mask snapshots strictly from included annotations
-  const maskImages = includedAnnotations
-    .filter((a) => a.kind === 'paint-region' && a.paintTarget?.maskDataUrl)
-    .map((a) => ({
-      mentionTag: a.mentionTag,
-      screenSlug: project.screens[a.screenId]?.slug ?? a.screenId,
-      dataUrl: a.paintTarget!.maskDataUrl!,
+  // Rich versioned annotation serialization for Gemini 4
+  const formattedLines = effectiveAnnotations.map((ref) => {
+    const { annotation: ann, revision: rev, screen, token, source } = ref;
+    const pinnedVariant = screen.variants.find((v) => v.id === ann.variantId);
+    const historyTrail =
+      ann.revisions.length > 1
+        ? ` | Revision history: ${ann.revisions
+            .map((r) => `v${r.revisionNumber}="${r.comment}"`)
+            .join(' -> ')}`
+        : '';
+
+    const domContext = ann.elementTarget
+      ? ` | Pinned DOM Element: <${ann.elementTarget.tagName}> text="${ann.elementTarget.textSnippet}" selector="${ann.elementTarget.selector}" coords=(${ann.xPercent}%, ${ann.yPercent}%)`
+      : '';
+
+    const paintContext = ann.paintTarget
+      ? ` | Painted Region Box: x=${ann.paintTarget.boundingBoxPercent.x}%, y=${ann.paintTarget.boundingBoxPercent.y}%, w=${ann.paintTarget.boundingBoxPercent.w}%, h=${ann.paintTarget.boundingBoxPercent.h}% selectors=[${ann.paintTarget.intersectingSelectors.join(', ')}]`
+      : '';
+
+    return `- [annotationId="${ann.id}"] ${token} on @${screen.slug} (variant="${pinnedVariant?.label ?? ann.variantId}", source=${source}, category=${rev.category}, rev=v${rev.revisionNumber}): "${rev.comment}"${domContext}${paintContext}${historyTrail}`;
+  });
+
+  const maskImages = effectiveAnnotations
+    .filter((r) => r.annotation.kind === 'paint-region' && r.annotation.paintTarget?.maskDataUrl)
+    .map((r) => ({
+      token: r.token,
+      screenSlug: r.screen.slug,
+      dataUrl: r.annotation.paintTarget!.maskDataUrl!,
     }));
 
   return {
     prompt,
-    mentions,
+    resolved,
     targetScreens,
-    includedAnnotations,
-    excludedAnnotationCount,
+    includedRefs: effectiveAnnotations,
+    excludedAnnotationCount: excludedAnnotations.length,
     topologySummary: topologyLines.join('\n'),
     neighborSummaries,
+    formattedAnnotationContext: formattedLines.join('\n'),
     maskImages,
   };
 }

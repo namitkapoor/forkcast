@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { DevicePreset } from '../types/studio';
 
 export interface PointPickPayload {
@@ -40,19 +40,37 @@ export const ScreenIframe: React.FC<ScreenIframeProps> = ({
   onPlayClick,
 }) => {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
 
   const nativeWidth = devicePreset === 'desktop' ? 1280 : 390;
   const nativeHeight = devicePreset === 'desktop' ? 800 : 844;
   const scale = Math.min(displayWidth / nativeWidth, displayHeight / nativeHeight);
 
+  const syncModeToIframe = useCallback(() => {
+    iframeRef.current?.contentWindow?.postMessage(
+      { type: 'fc:set-mode', mode: modeRef.current },
+      '*'
+    );
+  }, []);
+
   const srcDoc = useMemo(() => {
     const safeScreenId = JSON.stringify(screenId);
-    const safeMode = JSON.stringify(mode);
     return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script>
+    window.__FC_MODE__ = 'view';
+    window.addEventListener('message', function(ev) {
+      if (ev.data && ev.data.type === 'fc:set-mode') {
+        window.__FC_MODE__ = ev.data.mode;
+        var hb = document.getElementById('__fc_hover_box');
+        if (window.__FC_MODE__ !== 'point' && hb) hb.style.display = 'none';
+      }
+    });
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
@@ -72,7 +90,7 @@ export const ScreenIframe: React.FC<ScreenIframeProps> = ({
       border-radius: 6px;
       z-index: 999999;
       display: none;
-      transition: all 60ms ease;
+      transition: all 50ms ease;
     }
     #__fc_hover_tag {
       position: absolute;
@@ -95,7 +113,6 @@ export const ScreenIframe: React.FC<ScreenIframeProps> = ({
   <script>
     (function() {
       const SCREEN_ID = ${safeScreenId};
-      let MODE = ${safeMode};
       const hoverBox = document.getElementById('__fc_hover_box');
       const hoverTag = document.getElementById('__fc_hover_tag');
 
@@ -109,15 +126,8 @@ export const ScreenIframe: React.FC<ScreenIframeProps> = ({
         return tag + cls;
       }
 
-      window.addEventListener('message', function(ev) {
-        if (ev.data && ev.data.type === 'fc:set-mode') {
-          MODE = ev.data.mode;
-          if (MODE !== 'point' && hoverBox) hoverBox.style.display = 'none';
-        }
-      });
-
       document.addEventListener('mousemove', function(e) {
-        if (MODE !== 'point') return;
+        if (window.__FC_MODE__ !== 'point') return;
         const el = document.elementFromPoint(e.clientX, e.clientY);
         if (!el || el === document.body || el === document.documentElement || el.id === '__fc_hover_box') {
           hoverBox.style.display = 'none';
@@ -141,7 +151,7 @@ export const ScreenIframe: React.FC<ScreenIframeProps> = ({
         const el = e.target;
         if (!el) return;
 
-        if (MODE === 'point') {
+        if (window.__FC_MODE__ === 'point') {
           e.preventDefault();
           e.stopPropagation();
           const rect = el.getBoundingClientRect();
@@ -167,7 +177,7 @@ export const ScreenIframe: React.FC<ScreenIframeProps> = ({
           return;
         }
 
-        if (MODE === 'play') {
+        if (window.__FC_MODE__ === 'play') {
           e.preventDefault();
           e.stopPropagation();
           const edgeEl = el.closest ? el.closest('[data-fc-edge]') : null;
@@ -183,6 +193,8 @@ export const ScreenIframe: React.FC<ScreenIframeProps> = ({
           }, '*');
         }
       }, true);
+
+      window.parent.postMessage({ type: 'fc:ready', screenId: SCREEN_ID }, '*');
     })();
   </script>
 </body>
@@ -190,12 +202,16 @@ export const ScreenIframe: React.FC<ScreenIframeProps> = ({
   }, [html, nativeWidth, nativeHeight, screenId]);
 
   useEffect(() => {
-    iframeRef.current?.contentWindow?.postMessage({ type: 'fc:set-mode', mode }, '*');
-  }, [mode]);
+    syncModeToIframe();
+  }, [mode, syncModeToIframe]);
 
   useEffect(() => {
     const handler = (ev: MessageEvent) => {
       if (!ev.data || typeof ev.data !== 'object') return;
+      if (ev.data.type === 'fc:ready' && ev.data.screenId === screenId) {
+        syncModeToIframe();
+        return;
+      }
       if (ev.data.type === 'fc:point-pick' && ev.data.payload?.screenId === screenId) {
         onPointPick?.(ev.data.payload as PointPickPayload);
       }
@@ -205,7 +221,7 @@ export const ScreenIframe: React.FC<ScreenIframeProps> = ({
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [screenId, onPointPick, onPlayClick]);
+  }, [screenId, onPointPick, onPlayClick, syncModeToIframe]);
 
   const interactive = mode === 'point' || mode === 'play';
 
@@ -219,6 +235,7 @@ export const ScreenIframe: React.FC<ScreenIframeProps> = ({
         title={`screen-${screenId}`}
         sandbox="allow-scripts"
         srcDoc={srcDoc}
+        onLoad={syncModeToIframe}
         style={{
           width: nativeWidth,
           height: nativeHeight,

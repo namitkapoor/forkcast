@@ -3,61 +3,94 @@ import { persist } from 'zustand/middleware';
 import type {
   AnnotationCategory,
   CanvasViewMode,
+  ChatMessage,
   DesignVariant,
   DevicePreset,
   DisambiguationControl,
   FlowEdge,
   FlowProject,
+  LlmTaskConfig,
+  LlmTaskKey,
+  PendingPinDraft,
   PriorityTier,
   RuntimeSettings,
   ScreenAnnotation,
   ScreenNode,
   StudioTool,
+  TokenUsageEntry,
   TraversalTrace,
 } from '../types/studio';
 import { createStarterProject } from './presets';
 import { DEFAULT_RUNTIME_SETTINGS } from '../ai/budgetPolicy';
+import { getEnvApiKey, loadEnvRuntimeSettings } from '../ai/llmConfig';
+import { asyncJobs, isAbortError } from '../ai/asyncController';
 import { computeAutoLayout } from '../graph/autoLayout';
 import { applyTraceToGraph, compileWorkflowGraph } from '../graph/compiler';
 import { buildMultimodalContext } from '../ai/contextBuilder';
+import {
+  appendRevision,
+  createAnnotationId,
+  createRevisionId,
+  formatVersionedRef,
+  nextAnnotationMentionTag,
+} from '../domain/annotations';
+import { stripReferenceTokenFromText } from '../domain/references';
 import {
   assessPromptAmbiguity,
   evaluateScreenWithAI,
   generateNewFlowFromDisambiguation,
   generateVariantForScreen,
   refineScreenWithAI,
+  simulatePersonasWithAI,
 } from '../ai/geminiClient';
-import { runSimulatedPersonas } from '../eval/traversalRunner';
 
 function uid(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 7)}-${Date.now().toString(36).slice(-4)}`;
 }
 
+export type RightRailMode = 'chat' | 'inspector' | 'split';
+
 interface StudioState {
   project: FlowProject;
   settings: RuntimeSettings;
   activeTool: StudioTool;
+  rightRailMode: RightRailMode;
+  isLeftSidebarOpen: boolean;
   isPlayModeOpen: boolean;
   isSettingsOpen: boolean;
   compareScreenId: string | null;
+  pendingPinDraft: PendingPinDraft | null;
+  chatDraft: string;
+  detachedContextKeys: string[];
+  chatMessages: ChatMessage[];
   isBusy: boolean;
   busyLabel: string | null;
   toast: { id: number; text: string; tone?: 'info' | 'success' | 'warning' } | null;
 
   // UI & Navigation
   setActiveTool: (tool: StudioTool) => void;
-  selectScreen: (screenId: string | null) => void;
+  setRightRailMode: (mode: RightRailMode) => void;
+  setLeftSidebarOpen: (open: boolean) => void;
+  selectScreen: (screenId: string | null, openInspector?: boolean) => void;
   selectEdge: (edgeId: string | null) => void;
   setCanvasView: (view: CanvasViewMode) => void;
   setDevicePreset: (preset: DevicePreset) => void;
   setPlayModeOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setCompareScreenId: (screenId: string | null) => void;
+  setPendingPinDraft: (draft: PendingPinDraft | null) => void;
+  setChatDraft: (draft: string) => void;
+  appendToChatDraft: (snippet: string, unmuteKeys?: string[]) => void;
+  detachContextItem: (key: string, baseHandle: string) => void;
+  clearAllChatContext: () => void;
+  clearChatMessages: () => void;
+  cancelActiveAiJob: () => void;
   showToast: (text: string, tone?: 'info' | 'success' | 'warning') => void;
   clearToast: () => void;
 
   // Screen & Variant CRUD + Cognitive Load Controls
   updateScreenPosition: (screenId: string, position: { x: number; y: number }) => void;
+  setScreenStatus: (screenId: string, status: ScreenNode['status']) => void;
   setActiveVariant: (screenId: string, variantId: string) => void;
   setFinalizedVariant: (screenId: string, variantId: string) => void;
   toggleVariantHidden: (screenId: string, variantId: string) => void;
@@ -69,20 +102,23 @@ interface StudioState {
 
   // Edges
   connectScreens: (sourceId: string, targetId: string, label?: string) => void;
-  updateEdge: (edgeId: string, patch: Partial<Pick<FlowEdge, 'label' | 'edgeType' | 'isFinalFlowEdge'>>) => void;
+  updateEdge: (
+    edgeId: string,
+    patch: Partial<Pick<FlowEdge, 'label' | 'edgeType' | 'isFinalFlowEdge'>>
+  ) => void;
   deleteEdge: (edgeId: string) => void;
 
   // Annotations & Revisions
   addAnnotation: (
     screenId: string,
     payload: Omit<ScreenAnnotation, 'id' | 'mentionTag' | 'createdAt' | 'revisions' | 'status'>
-  ) => string;
+  ) => ScreenAnnotation | null;
   editAnnotation: (
     screenId: string,
     annotationId: string,
     comment: string,
     category?: AnnotationCategory
-  ) => void;
+  ) => ScreenAnnotation | null;
   toggleAnnotationIncludeInAi: (screenId: string, annotationId: string) => void;
   setAllScreenAnnotationsIncludeInAi: (screenId: string, include: boolean) => void;
   toggleAnnotationStatus: (screenId: string, annotationId: string) => void;
@@ -91,6 +127,11 @@ interface StudioState {
 
   // Budget & Settings
   updateSettings: (patch: Partial<RuntimeSettings>) => void;
+  updateLlmTaskConfig: (
+    taskKey: LlmTaskKey,
+    patch: Partial<Pick<LlmTaskConfig, 'model' | 'thinkingLevel'>>
+  ) => void;
+  reloadSettingsFromEnv: () => void;
   updateTotalBudget: (tokens: number) => void;
   updateTierShare: (tier: PriorityTier, share: number) => void;
 
@@ -108,7 +149,8 @@ interface StudioState {
   exploreNewVariant: (screenId: string, styleHint?: string) => Promise<void>;
   runUXEval: (screenId?: string) => Promise<void>;
   recordTraversalTrace: (trace: TraversalTrace) => void;
-  runPersonaSimulation: () => void;
+  recordTokenUsage: (entry: TokenUsageEntry) => void;
+  runPersonaSimulation: () => Promise<void>;
   applyCompiledGraphWinners: () => void;
   resetProject: () => void;
 }
@@ -119,9 +161,22 @@ export const useStudioStore = create<StudioState>()(
       project: createStarterProject(),
       settings: { ...DEFAULT_RUNTIME_SETTINGS },
       activeTool: 'select',
+      rightRailMode: 'chat',
+      isLeftSidebarOpen: true,
       isPlayModeOpen: false,
       isSettingsOpen: false,
       compareScreenId: null,
+      pendingPinDraft: null,
+      chatDraft: '',
+      detachedContextKeys: [],
+      chatMessages: [
+        {
+          id: 'msg-welcome',
+          role: 'assistant',
+          timestamp: Date.now(),
+          text: 'Pin any UI element (C), paint a region (B), or type @Pin to reference versioned annotations (e.g. @Pin-1:v2) and screens (@Checkout). Your chat stays persistent across all screens.',
+        },
+      ],
       isBusy: false,
       busyLabel: null,
       toast: null,
@@ -134,8 +189,15 @@ export const useStudioStore = create<StudioState>()(
         set({ activeTool: tool });
       },
 
-      selectScreen: (screenId) =>
+      setRightRailMode: (mode) => set({ rightRailMode: mode }),
+      setLeftSidebarOpen: (open) => set({ isLeftSidebarOpen: open }),
+
+      selectScreen: (screenId, openInspector = false) =>
         set((s) => ({
+          rightRailMode: openInspector ? 'inspector' : s.rightRailMode,
+          detachedContextKeys: screenId
+            ? s.detachedContextKeys.filter((k) => k !== `screen:${screenId}`)
+            : s.detachedContextKeys,
           project: {
             ...s.project,
             selectedScreenId: screenId,
@@ -145,6 +207,7 @@ export const useStudioStore = create<StudioState>()(
 
       selectEdge: (edgeId) =>
         set((s) => ({
+          rightRailMode: edgeId && s.rightRailMode === 'chat' ? 'chat' : s.rightRailMode,
           project: {
             ...s.project,
             selectedEdgeId: edgeId,
@@ -206,6 +269,111 @@ export const useStudioStore = create<StudioState>()(
       setPlayModeOpen: (open) => set({ isPlayModeOpen: open }),
       setSettingsOpen: (open) => set({ isSettingsOpen: open }),
       setCompareScreenId: (screenId) => set({ compareScreenId: screenId }),
+      setPendingPinDraft: (draft) => set({ pendingPinDraft: draft }),
+      setChatDraft: (draft) => set({ chatDraft: draft }),
+
+      appendToChatDraft: (snippet, unmuteKeys = []) =>
+        set((s) => {
+          const cur = s.chatDraft;
+          const sep =
+            snippet && cur.length > 0 && !cur.endsWith(' ') ? ' ' : '';
+          const unmuteSet = new Set(unmuteKeys);
+
+          // Automatically unmute any screen or annotation matching `snippet` (e.g. `@Pin-2:v1` or `@Checkout`)
+          const clean = snippet.trim().replace(/^@/, '').replace(/:v?\d+$/i, '').toLowerCase();
+          if (clean) {
+            for (const sc of Object.values(s.project.screens)) {
+              if (sc.slug.toLowerCase() === clean) unmuteSet.add(`screen:${sc.id}`);
+              for (const ann of sc.annotations) {
+                if (ann.mentionTag.toLowerCase() === clean) {
+                  unmuteSet.add(`ann:${ann.id}`);
+                  unmuteSet.add(`screen:${sc.id}`);
+                }
+              }
+            }
+          }
+
+          return {
+            rightRailMode: s.rightRailMode === 'inspector' ? 'chat' : s.rightRailMode,
+            detachedContextKeys:
+              unmuteSet.size > 0
+                ? s.detachedContextKeys.filter((k) => !unmuteSet.has(k))
+                : s.detachedContextKeys,
+            chatDraft: snippet ? `${cur}${sep}${snippet} ` : cur,
+          };
+        }),
+
+      detachContextItem: (key, baseHandle) =>
+        set((s) => {
+          let nextDraft = stripReferenceTokenFromText(s.chatDraft, baseHandle);
+          const keysToAdd = new Set<string>(s.detachedContextKeys);
+          keysToAdd.add(key);
+
+          // If detaching an entire screen, also strip & detach any pins belonging to that screen
+          if (key.startsWith('screen:')) {
+            const sid = key.slice('screen:'.length);
+            const sc = s.project.screens[sid];
+            if (sc) {
+              for (const ann of sc.annotations) {
+                keysToAdd.add(`ann:${ann.id}`);
+                nextDraft = stripReferenceTokenFromText(nextDraft, ann.mentionTag);
+              }
+            }
+          }
+
+          return {
+            chatDraft: nextDraft,
+            detachedContextKeys: Array.from(keysToAdd),
+          };
+        }),
+
+      clearAllChatContext: () =>
+        set((s) => {
+          const keys = new Set(s.detachedContextKeys);
+          if (s.project.selectedScreenId) {
+            keys.add(`screen:${s.project.selectedScreenId}`);
+            const sc = s.project.screens[s.project.selectedScreenId];
+            sc?.annotations.forEach((a) => keys.add(`ann:${a.id}`));
+          }
+          // Strip all @Reference tokens from draft while preserving normal words
+          const cleanedDraft = s.chatDraft
+            .replace(/(?:^|\s)@[A-Za-z0-9_:-]+/g, ' ')
+            .replace(/[ \t]{2,}/g, ' ')
+            .trimStart();
+          return {
+            chatDraft: cleanedDraft,
+            detachedContextKeys: Array.from(keys),
+          };
+        }),
+
+      clearChatMessages: () =>
+        set({
+          chatMessages: [
+            {
+              id: uid('msg'),
+              role: 'assistant',
+              timestamp: Date.now(),
+              text: 'Chat cleared. Type @Pin or @Screen to reference versioned pins and screens.',
+            },
+          ],
+        }),
+
+      cancelActiveAiJob: () => {
+        asyncJobs.cancelAll();
+        set((s) => {
+          const resetScreens: Record<string, ScreenNode> = {};
+          for (const [id, sc] of Object.entries(s.project.screens)) {
+            resetScreens[id] = sc.status !== 'idle' ? { ...sc, status: 'idle' } : sc;
+          }
+          return {
+            isBusy: false,
+            busyLabel: null,
+            project: { ...s.project, screens: resetScreens },
+            toast: { id: Date.now(), text: 'Cancelled in-flight AI request', tone: 'info' },
+          };
+        });
+      },
+
       showToast: (text, tone = 'info') => set({ toast: { id: Date.now(), text, tone } }),
       clearToast: () => set({ toast: null }),
 
@@ -219,6 +387,21 @@ export const useStudioStore = create<StudioState>()(
               screens: {
                 ...s.project.screens,
                 [screenId]: { ...screen, position },
+              },
+            },
+          };
+        }),
+
+      setScreenStatus: (screenId, status) =>
+        set((s) => {
+          const sc = s.project.screens[screenId];
+          if (!sc) return s;
+          return {
+            project: {
+              ...s.project,
+              screens: {
+                ...s.project.screens,
+                [screenId]: { ...sc, status },
               },
             },
           };
@@ -277,7 +460,7 @@ export const useStudioStore = create<StudioState>()(
             },
           };
         });
-        get().showToast('Marked option as Finalized version for this screen', 'success');
+        get().showToast('Marked option as Finalized version', 'success');
       },
 
       toggleVariantHidden: (screenId, variantId) =>
@@ -288,7 +471,6 @@ export const useStudioStore = create<StudioState>()(
           if (!target) return s;
 
           const nextHidden = !target.isHidden;
-          // Prevent hiding the last visible option
           const visibleAfter = screen.variants.filter((v) =>
             v.id === variantId ? !nextHidden : !v.isHidden
           );
@@ -399,7 +581,7 @@ export const useStudioStore = create<StudioState>()(
             {
               id: varId,
               label: 'Skeleton Draft',
-              rationale: 'Click "Expand to Live UI" or prompt @' + slug + ' to generate options.',
+              rationale: 'Click "Expand to Interactive UI" or prompt @' + slug + ' to generate.',
               fidelity: 'skeleton',
               isHidden: false,
               html: '',
@@ -519,15 +701,11 @@ export const useStudioStore = create<StudioState>()(
         }),
 
       addAnnotation: (screenId, payload) => {
-        const id = uid('ann');
         const screen = get().project.screens[screenId];
-        const existingCount = Object.values(get().project.screens)
-          .flatMap((sc) => sc.annotations)
-          .filter((a) => a.kind === payload.kind).length;
-        const mentionTag =
-          payload.kind === 'paint-region'
-            ? `Mask-${existingCount + 1}`
-            : `Pin-${existingCount + 1}`;
+        if (!screen) return null;
+
+        const id = createAnnotationId();
+        const mentionTag = nextAnnotationMentionTag(get().project, payload.kind);
         const now = Date.now();
         const ann: ScreenAnnotation = {
           ...payload,
@@ -537,7 +715,7 @@ export const useStudioStore = create<StudioState>()(
           createdAt: now,
           revisions: [
             {
-              id: uid('rev'),
+              id: createRevisionId(),
               revisionNumber: 1,
               timestamp: now,
               author: payload.author,
@@ -548,50 +726,35 @@ export const useStudioStore = create<StudioState>()(
           ],
         };
 
-        if (screen) {
-          set((s) => ({
-            project: {
-              ...s.project,
-              screens: {
-                ...s.project.screens,
-                [screenId]: {
-                  ...s.project.screens[screenId],
-                  annotations: [...s.project.screens[screenId].annotations, ann],
-                },
+        set((s) => ({
+          project: {
+            ...s.project,
+            screens: {
+              ...s.project.screens,
+              [screenId]: {
+                ...s.project.screens[screenId],
+                annotations: [...s.project.screens[screenId].annotations, ann],
               },
             },
-          }));
-          get().showToast(`Saved @${mentionTag} (Revision v1)`, 'success');
-        }
-        return id;
+          },
+        }));
+        get().showToast(`Saved ${formatVersionedRef(ann, 1)} on @${screen.slug}`, 'success');
+        return ann;
       },
 
-      editAnnotation: (screenId, annotationId, comment, category) =>
+      editAnnotation: (screenId, annotationId, comment, category) => {
+        let updatedAnn: ScreenAnnotation | null = null;
         set((s) => {
           const screen = s.project.screens[screenId];
           if (!screen) return s;
-          const now = Date.now();
           const nextAnnotations = screen.annotations.map((ann) => {
             if (ann.id !== annotationId) return ann;
-            const nextRevNum = ann.revisions.length + 1;
-            const nextCat = category ?? ann.category;
-            return {
-              ...ann,
+            updatedAnn = appendRevision(ann, {
               comment,
-              category: nextCat,
-              revisions: [
-                ...ann.revisions,
-                {
-                  id: uid('rev'),
-                  revisionNumber: nextRevNum,
-                  timestamp: now,
-                  author: 'designer' as const,
-                  comment,
-                  category: nextCat,
-                  status: ann.status,
-                },
-              ],
-            };
+              category: category ?? ann.category,
+              author: 'designer',
+            });
+            return updatedAnn;
           });
           return {
             project: {
@@ -601,9 +764,17 @@ export const useStudioStore = create<StudioState>()(
                 [screenId]: { ...screen, annotations: nextAnnotations },
               },
             },
-            toast: { id: now, text: 'Saved new annotation revision', tone: 'success' },
+            toast: {
+              id: Date.now(),
+              text: updatedAnn
+                ? `Saved ${formatVersionedRef(updatedAnn)}`
+                : 'Saved annotation revision',
+              tone: 'success',
+            },
           };
-        }),
+        });
+        return updatedAnn;
+      },
 
       toggleAnnotationIncludeInAi: (screenId, annotationId) =>
         set((s) => {
@@ -652,7 +823,6 @@ export const useStudioStore = create<StudioState>()(
         set((s) => {
           const screen = s.project.screens[screenId];
           if (!screen) return s;
-          const now = Date.now();
           return {
             project: {
               ...s.project,
@@ -660,26 +830,14 @@ export const useStudioStore = create<StudioState>()(
                 ...s.project.screens,
                 [screenId]: {
                   ...screen,
-                  annotations: screen.annotations.map((ann) => {
-                    if (ann.id !== annotationId) return ann;
-                    const nextStatus = ann.status === 'open' ? 'resolved' : 'open';
-                    return {
-                      ...ann,
-                      status: nextStatus,
-                      revisions: [
-                        ...ann.revisions,
-                        {
-                          id: uid('rev'),
-                          revisionNumber: ann.revisions.length + 1,
-                          timestamp: now,
+                  annotations: screen.annotations.map((ann) =>
+                    ann.id === annotationId
+                      ? appendRevision(ann, {
+                          status: ann.status === 'open' ? 'resolved' : 'open',
                           author: 'designer',
-                          comment: ann.comment,
-                          category: ann.category,
-                          status: nextStatus,
-                        },
-                      ],
-                    };
-                  }),
+                        })
+                      : ann
+                  ),
                 },
               },
             },
@@ -690,7 +848,6 @@ export const useStudioStore = create<StudioState>()(
         set((s) => {
           const screen = s.project.screens[screenId];
           if (!screen) return s;
-          const now = Date.now();
           return {
             project: {
               ...s.project,
@@ -702,29 +859,21 @@ export const useStudioStore = create<StudioState>()(
                     if (ann.id !== annotationId) return ann;
                     const rev = ann.revisions.find((r) => r.id === revisionId);
                     if (!rev) return ann;
-                    return {
-                      ...ann,
+                    return appendRevision(ann, {
                       comment: rev.comment,
                       category: rev.category,
                       status: 'open',
-                      revisions: [
-                        ...ann.revisions,
-                        {
-                          id: uid('rev'),
-                          revisionNumber: ann.revisions.length + 1,
-                          timestamp: now,
-                          author: 'designer',
-                          comment: rev.comment,
-                          category: rev.category,
-                          status: 'open',
-                        },
-                      ],
-                    };
+                      author: 'designer',
+                    });
                   }),
                 },
               },
             },
-            toast: { id: now, text: 'Restored revision as latest version', tone: 'info' },
+            toast: {
+              id: Date.now(),
+              text: 'Restored revision as latest version',
+              tone: 'info',
+            },
           };
         }),
 
@@ -751,11 +900,31 @@ export const useStudioStore = create<StudioState>()(
           settings: {
             ...s.settings,
             ...patch,
-            models: patch.models
-              ? { ...s.settings.models, ...patch.models }
-              : s.settings.models,
+            llmTasks: patch.llmTasks
+              ? { ...s.settings.llmTasks, ...patch.llmTasks }
+              : s.settings.llmTasks,
           },
         })),
+
+      updateLlmTaskConfig: (taskKey, patch) =>
+        set((s) => ({
+          settings: {
+            ...s.settings,
+            llmTasks: {
+              ...s.settings.llmTasks,
+              [taskKey]: {
+                ...s.settings.llmTasks[taskKey],
+                ...patch,
+              },
+            },
+          },
+        })),
+
+      reloadSettingsFromEnv: () => {
+        const fresh = loadEnvRuntimeSettings();
+        set({ settings: fresh });
+        get().showToast('Synced all Gemini 4 models & thinking levels from .env', 'info');
+      },
 
       updateTotalBudget: (totalTokenBudget) =>
         set((s) => ({
@@ -818,9 +987,11 @@ export const useStudioStore = create<StudioState>()(
         })),
 
       confirmDisambiguation: async () => {
-        const { project, settings } = get();
-        const req = project.pendingDisambiguation;
+        const req = get().project.pendingDisambiguation;
         if (!req) return;
+
+        const jobId = 'flow-architect';
+        const signal = asyncJobs.startJob(jobId);
 
         const summaryLines = req.controls.map((c) => {
           if (c.kind === 'choice-cards') return `${c.label}: ${c.selectedIds.join(', ')}`;
@@ -829,24 +1000,25 @@ export const useStudioStore = create<StudioState>()(
           return `${c.label}: ${c.selected.join(', ')}`;
         });
 
-        set({
+        set((s) => ({
           isBusy: true,
-          busyLabel: 'Synthesizing progressive user flow from disambiguation...',
-          project: { ...project, pendingDisambiguation: null },
-        });
+          busyLabel: `Synthesizing flow (${s.settings.llmTasks.FLOW_ARCHITECT.model} · ${s.settings.llmTasks.FLOW_ARCHITECT.thinkingLevel})...`,
+          project: { ...s.project, pendingDisambiguation: null },
+        }));
 
         try {
           const res = await generateNewFlowFromDisambiguation(
             req.originalPrompt,
             summaryLines.join('\n'),
-            project,
-            settings
+            get().project,
+            get().settings,
+            signal
           );
           const positions = computeAutoLayout(
             res.data.screens,
             res.data.edges,
             'flow',
-            project.devicePreset
+            get().project.devicePreset
           );
           const laidOutScreens: Record<string, ScreenNode> = {};
           for (const [id, sc] of Object.entries(res.data.screens)) {
@@ -855,8 +1027,6 @@ export const useStudioStore = create<StudioState>()(
           const firstScreenId = Object.keys(laidOutScreens)[0] ?? null;
 
           set((s) => ({
-            isBusy: false,
-            busyLabel: null,
             project: {
               ...s.project,
               name: res.data.projectName,
@@ -867,71 +1037,169 @@ export const useStudioStore = create<StudioState>()(
               edges: res.data.edges,
               tokenLedger: [...s.project.tokenLedger, res.usage],
             },
+            chatMessages: [
+              ...s.chatMessages,
+              {
+                id: uid('msg'),
+                role: 'assistant',
+                timestamp: Date.now(),
+                text: `Generated ${Object.keys(laidOutScreens).length}-screen user journey "${res.data.projectName}".`,
+                modelUsed: res.usage.model,
+                thinkingLevel: res.usage.thinkingLevel,
+                usedMock: res.usedMock,
+                tokens: {
+                  prompt: res.usage.promptTokens,
+                  output: res.usage.outputTokens,
+                  thought: res.usage.thoughtTokens,
+                  total: res.usage.totalTokens,
+                },
+              },
+            ],
           }));
           get().showToast(
-            `Generated ${Object.keys(laidOutScreens).length}-screen flow (${res.usage.totalTokens.toLocaleString()} tok${res.usedMock ? ' · Demo' : ''})`,
+            `Generated ${Object.keys(laidOutScreens).length}-screen flow`,
             'success'
           );
         } catch (err) {
+          if (!isAbortError(err)) {
+            const msg = (err as Error).message || String(err);
+            set((s) => ({
+              chatMessages: [
+                ...s.chatMessages,
+                { id: uid('msg'), role: 'error', timestamp: Date.now(), text: msg },
+              ],
+            }));
+          }
+        } finally {
+          asyncJobs.finishJob(jobId);
           set({ isBusy: false, busyLabel: null });
-          get().showToast(`Generation failed: ${(err as Error).message}`, 'warning');
         }
       },
 
       submitPrompt: async (prompt, skipAmbiguity = false) => {
         const trimmed = prompt.trim();
         if (!trimmed) return;
-        const { project, settings } = get();
 
-        if (!skipAmbiguity) {
-          set({ isBusy: true, busyLabel: 'Checking intent ambiguity...' });
-          const amb = await assessPromptAmbiguity(trimmed, project, settings);
-          set((s) => ({
-            project: {
-              ...s.project,
-              tokenLedger: [...s.project.tokenLedger, amb.usage],
-            },
-          }));
-          if (amb.data.ambiguous && amb.data.request) {
-            set((s) => ({
-              isBusy: false,
-              busyLabel: null,
-              project: { ...s.project, pendingDisambiguation: amb.data.request },
-            }));
-            get().showToast(
-              `Disambiguate in 3 clicks to save ~${Math.round(
-                amb.data.request.estimatedTokenSavings / 1000
-              )}k tokens`,
-              'info'
-            );
-            return;
-          }
-        }
+        const jobId = 'submit-prompt';
+        const signal = asyncJobs.startJob(jobId);
 
-        // Direct Fast Path -> Refine targeted @Screen(s) with strictly included annotations
-        const context = buildMultimodalContext(trimmed, get().project, get().project.selectedScreenId);
-        const target = context.targetScreens[0];
-        if (!target) {
-          set({ isBusy: false, busyLabel: null });
-          get().showToast('Select a screen or mention @ScreenSlug to refine', 'warning');
-          return;
-        }
+        const initialContext = buildMultimodalContext(
+          trimmed,
+          get().project,
+          get().project.selectedScreenId,
+          new Set(get().detachedContextKeys)
+        );
 
-        set({
-          isBusy: true,
-          busyLabel: `Refining @${target.slug} (${context.includedAnnotations.length} included annotation${
-            context.includedAnnotations.length === 1 ? '' : 's'
-          })...`,
-        });
+        const userMsg: ChatMessage = {
+          id: uid('msg'),
+          role: 'user',
+          timestamp: Date.now(),
+          text: trimmed,
+          attachedMentions: [
+            ...initialContext.targetScreens.map((sc) => `@${sc.slug}`),
+            ...initialContext.includedRefs.map((r) => r.token),
+          ],
+          excludedAnnotationCount: initialContext.excludedAnnotationCount,
+        };
+
+        set((s) => ({
+          chatMessages: [...s.chatMessages, userMsg],
+        }));
+
+        let targetScreenIdForCleanup: string | null = null;
 
         try {
-          const res = await refineScreenWithAI(context, get().project, settings);
+          if (!skipAmbiguity) {
+            set((s) => ({
+              isBusy: true,
+              busyLabel: `Checking ambiguity (${s.settings.llmTasks.DISAMBIGUATE.model} · ${s.settings.llmTasks.DISAMBIGUATE.thinkingLevel})...`,
+            }));
+
+            const amb = await assessPromptAmbiguity(
+              trimmed,
+              get().project,
+              get().settings,
+              signal
+            );
+
+            if (amb.usage.totalTokens > 0) {
+              set((s) => ({
+                project: {
+                  ...s.project,
+                  tokenLedger: [...s.project.tokenLedger, amb.usage],
+                },
+              }));
+            }
+
+            if (amb.data.ambiguous && amb.data.request) {
+              const disambigReq = amb.data.request;
+              set((s) => ({
+                project: { ...s.project, pendingDisambiguation: disambigReq },
+                chatMessages: [
+                  ...s.chatMessages,
+                  {
+                    id: uid('msg'),
+                    role: 'assistant',
+                    timestamp: Date.now(),
+                    text: `Clarify 3 quick visual choices below before generating — ${disambigReq.rationale}`,
+                    modelUsed: amb.usage.model,
+                    thinkingLevel: amb.usage.thinkingLevel,
+                    usedMock: amb.usedMock,
+                  },
+                ],
+              }));
+              return;
+            }
+          }
+
+          // Re-build context from latest fresh store state (respecting detached context items!)
+          const context = buildMultimodalContext(
+            trimmed,
+            get().project,
+            get().project.selectedScreenId,
+            new Set(get().detachedContextKeys)
+          );
+          const target = context.targetScreens[0];
+
+          if (!target) {
+            set((s) => ({
+              chatMessages: [
+                ...s.chatMessages,
+                {
+                  id: uid('msg'),
+                  role: 'error',
+                  timestamp: Date.now(),
+                  text: 'Select a screen on the canvas or mention @ScreenSlug / @Pin-N:vK in your prompt.',
+                },
+              ],
+            }));
+            return;
+          }
+
+          targetScreenIdForCleanup = target.id;
+          get().setScreenStatus(target.id, 'generating');
+
+          const isCore = target.priority === 'core' && target.policyMode !== 'exploit-locked';
+          const activeTask = isCore
+            ? get().settings.llmTasks.REFINE_CORE
+            : get().settings.llmTasks.REFINE_SMALL;
+
+          set({
+            isBusy: true,
+            busyLabel: `Iterating @${target.slug} with ${activeTask.model} (${activeTask.thinkingLevel}) · ${context.includedRefs.length} versioned pin(s)...`,
+          });
+
+          const res = await refineScreenWithAI(context, get().project, get().settings, signal);
           const now = Date.now();
           const newVarId = uid('var');
+          const resolvedSet = new Set(res.data.resolvedAnnotationIds);
+          const addressedTokens = context.includedRefs
+            .filter((r) => resolvedSet.has(r.annotation.id))
+            .map((r) => r.token);
 
           set((s) => {
             const sc = s.project.screens[res.data.targetScreenId];
-            if (!sc) return { isBusy: false, busyLabel: null };
+            if (!sc) return s;
 
             const newVariant: DesignVariant = {
               id: newVarId,
@@ -955,31 +1223,40 @@ export const useStudioStore = create<StudioState>()(
               },
             };
 
-            const resolvedSet = new Set(res.data.resolvedAnnotationIds);
             const nextAnnotations = sc.annotations.map((ann) => {
               if (!resolvedSet.has(ann.id)) return ann;
-              return {
-                ...ann,
-                status: 'resolved' as const,
-                revisions: [
-                  ...ann.revisions,
-                  {
-                    id: uid('rev'),
-                    revisionNumber: ann.revisions.length + 1,
-                    timestamp: now,
-                    author: 'ai-evaluator' as const,
-                    comment: `${ann.comment} [Addressed in ${res.data.newVariantLabel}]`,
-                    category: ann.category,
-                    status: 'resolved' as const,
-                    resolvedByVariantId: newVarId,
-                  },
-                ],
-              };
+              return appendRevision(ann, {
+                comment: `${ann.comment} [Addressed in ${res.data.newVariantLabel}]`,
+                status: 'resolved',
+                author: 'ai-evaluator',
+                resolvedByVariantId: newVarId,
+              });
             });
 
+            const assistantMsg: ChatMessage = {
+              id: uid('msg'),
+              role: 'assistant',
+              timestamp: now,
+              text: res.data.rationale,
+              targetScreenId: sc.id,
+              targetScreenSlug: sc.slug,
+              createdVariantId: newVarId,
+              createdVariantLabel: res.data.newVariantLabel,
+              resolvedMentionTags: addressedTokens,
+              excludedAnnotationCount: context.excludedAnnotationCount,
+              modelUsed: res.usage.model,
+              thinkingLevel: res.usage.thinkingLevel,
+              usedMock: res.usedMock,
+              tokens: {
+                prompt: res.usage.promptTokens,
+                output: res.usage.outputTokens,
+                thought: res.usage.thoughtTokens,
+                total: res.usage.totalTokens,
+              },
+            };
+
             return {
-              isBusy: false,
-              busyLabel: null,
+              chatMessages: [...s.chatMessages, assistantMsg],
               project: {
                 ...s.project,
                 selectedScreenId: sc.id,
@@ -987,6 +1264,7 @@ export const useStudioStore = create<StudioState>()(
                   ...s.project.screens,
                   [sc.id]: {
                     ...sc,
+                    status: 'idle',
                     fidelity: 'interactive',
                     variants: [...sc.variants, newVariant],
                     activeVariantId: newVarId,
@@ -999,16 +1277,32 @@ export const useStudioStore = create<StudioState>()(
           });
 
           get().showToast(
-            `Created "${res.data.newVariantLabel}" on @${target.slug} (${res.usage.totalTokens.toLocaleString()} tok${
-              context.excludedAnnotationCount > 0
-                ? ` · ${context.excludedAnnotationCount} excluded note kept private`
-                : ''
-            })`,
+            `Created "${res.data.newVariantLabel}" on @${target.slug}`,
             'success'
           );
         } catch (err) {
+          if (!isAbortError(err)) {
+            const message = (err as Error).message || String(err);
+            set((s) => ({
+              chatMessages: [
+                ...s.chatMessages,
+                {
+                  id: uid('msg'),
+                  role: 'error',
+                  timestamp: Date.now(),
+                  text: message,
+                  retryPrompt: trimmed,
+                },
+              ],
+              toast: { id: Date.now(), text: `Gemini 4 error: ${message}`, tone: 'warning' },
+            }));
+          }
+        } finally {
+          asyncJobs.finishJob(jobId);
+          if (targetScreenIdForCleanup) {
+            get().setScreenStatus(targetScreenIdForCleanup, 'idle');
+          }
           set({ isBusy: false, busyLabel: null });
-          get().showToast(`AI refinement failed: ${(err as Error).message}`, 'warning');
         }
       },
 
@@ -1020,39 +1314,48 @@ export const useStudioStore = create<StudioState>()(
         );
         if (included.length === 0 && !extraDirective?.trim()) {
           get().showToast(
-            'Toggle "Include in AI" ON for at least one open annotation first',
+            'Toggle "Include in AI" ON for at least one annotation or mention @Pin-N:vK directly',
             'warning'
           );
           return;
         }
-        const mentionTags = included.map((a) => `@${a.mentionTag}`).join(' ');
+        const versionedTokens = included.map((a) => formatVersionedRef(a)).join(' ');
         const directive =
           extraDirective?.trim() ||
-          `Refine @${screen.slug} addressing ${mentionTags || 'open feedback'} while preserving flow continuity.`;
+          `Iterate @${screen.slug} implementing ${versionedTokens || 'open feedback'} while preserving flow continuity.`;
         await get().submitPrompt(directive, true);
       },
 
       exploreNewVariant: async (screenId, styleHint) => {
-        const { project, settings } = get();
-        const screen = project.screens[screenId];
+        const screen = get().project.screens[screenId];
         if (!screen) return;
+
+        const jobId = `variant-${screenId}`;
+        const signal = asyncJobs.startJob(jobId);
+        get().setScreenStatus(screenId, 'generating');
 
         set({
           isBusy: true,
           busyLabel:
             screen.fidelity === 'skeleton'
-              ? `Expanding @${screen.slug} from Skeleton to Live UI...`
-              : `Exploring new alternative for @${screen.slug}...`,
+              ? `Expanding @${screen.slug} to interactive UI...`
+              : `Exploring alternative for @${screen.slug}...`,
         });
 
         try {
-          const res = await generateVariantForScreen(screen, project, settings, styleHint);
+          const res = await generateVariantForScreen(
+            get().project.screens[screenId],
+            get().project,
+            get().settings,
+            styleHint,
+            signal
+          );
           const newVarId = uid('var');
           const now = Date.now();
 
           set((s) => {
             const sc = s.project.screens[screenId];
-            if (!sc) return { isBusy: false, busyLabel: null };
+            if (!sc) return s;
             const newVariant: DesignVariant = {
               id: newVarId,
               label: res.data.label,
@@ -1076,14 +1379,35 @@ export const useStudioStore = create<StudioState>()(
             };
 
             return {
-              isBusy: false,
-              busyLabel: null,
+              chatMessages: [
+                ...s.chatMessages,
+                {
+                  id: uid('msg'),
+                  role: 'assistant',
+                  timestamp: now,
+                  text: res.data.rationale,
+                  targetScreenId: sc.id,
+                  targetScreenSlug: sc.slug,
+                  createdVariantId: newVarId,
+                  createdVariantLabel: res.data.label,
+                  modelUsed: res.usage.model,
+                  thinkingLevel: res.usage.thinkingLevel,
+                  usedMock: res.usedMock,
+                  tokens: {
+                    prompt: res.usage.promptTokens,
+                    output: res.usage.outputTokens,
+                    thought: res.usage.thoughtTokens,
+                    total: res.usage.totalTokens,
+                  },
+                },
+              ],
               project: {
                 ...s.project,
                 screens: {
                   ...s.project.screens,
                   [screenId]: {
                     ...sc,
+                    status: 'idle',
                     fidelity: 'interactive',
                     variants: [...sc.variants, newVariant],
                     activeVariantId: newVarId,
@@ -1096,68 +1420,99 @@ export const useStudioStore = create<StudioState>()(
             };
           });
 
-          get().showToast(
-            `Added "${res.data.label}" to @${screen.slug} (${res.usage.totalTokens.toLocaleString()} tok)`,
-            'success'
-          );
+          get().showToast(`Added "${res.data.label}" to @${screen.slug}`, 'success');
         } catch (err) {
+          if (!isAbortError(err)) {
+            const msg = (err as Error).message || String(err);
+            set((s) => ({
+              chatMessages: [
+                ...s.chatMessages,
+                { id: uid('msg'), role: 'error', timestamp: Date.now(), text: msg },
+              ],
+              toast: { id: Date.now(), text: `Variant error: ${msg}`, tone: 'warning' },
+            }));
+          }
+        } finally {
+          asyncJobs.finishJob(jobId);
+          get().setScreenStatus(screenId, 'idle');
           set({ isBusy: false, busyLabel: null });
-          get().showToast(`Variant generation failed: ${(err as Error).message}`, 'warning');
         }
       },
 
       runUXEval: async (screenId) => {
-        const { project, settings } = get();
         const targets = screenId
-          ? [project.screens[screenId]].filter(Boolean)
-          : Object.values(project.screens).filter(
+          ? [get().project.screens[screenId]].filter(Boolean)
+          : Object.values(get().project.screens).filter(
               (s) => s.isInFinalFlow && s.fidelity === 'interactive'
             );
 
         if (targets.length === 0) return;
 
+        const jobId = 'ux-eval';
+        const signal = asyncJobs.startJob(jobId);
+
         set({
           isBusy: true,
           busyLabel:
             targets.length === 1
-              ? `Evaluating UX & flow continuity on @${targets[0].slug}...`
-              : `Running UX Evaluation across ${targets.length} Final Flow screens...`,
+              ? `Evaluating UX on @${targets[0].slug}...`
+              : `Evaluating UX across ${targets.length} Final Flow screens...`,
         });
 
         try {
           let totalAddedPins = 0;
-          let totalTok = 0;
 
           for (const target of targets) {
-            const res = await evaluateScreenWithAI(target, get().project, settings);
-            totalTok += res.usage.totalTokens;
+            if (signal.aborted) break;
+            get().setScreenStatus(target.id, 'evaluating');
+
+            const freshTarget = get().project.screens[target.id];
+            if (!freshTarget) continue;
+
+            const res = await evaluateScreenWithAI(
+              freshTarget,
+              get().project,
+              get().settings,
+              signal
+            );
             const now = Date.now();
 
             set((s) => {
               const sc = s.project.screens[target.id];
               if (!sc) return s;
 
-              const existingPinCount = Object.values(s.project.screens)
-                .flatMap((x) => x.annotations)
-                .filter((a) => a.kind === 'point-element').length;
-
-              const newPins: ScreenAnnotation[] = res.data.aiPins.map((p, i) => ({
-                ...p,
-                id: uid('ann-ai'),
-                mentionTag: `Pin-${existingPinCount + i + 1}`,
-                createdAt: now,
-                revisions: [
-                  {
-                    id: uid('rev'),
-                    revisionNumber: 1,
-                    timestamp: now,
-                    author: 'ai-evaluator',
-                    comment: p.comment,
-                    category: p.category,
-                    status: 'open',
+              let tempProject = s.project;
+              const newPins: ScreenAnnotation[] = res.data.aiPins.map((p) => {
+                const mentionTag = nextAnnotationMentionTag(tempProject, 'point-element');
+                const created: ScreenAnnotation = {
+                  ...p,
+                  id: createAnnotationId('ann-ai'),
+                  mentionTag,
+                  createdAt: now,
+                  revisions: [
+                    {
+                      id: createRevisionId(),
+                      revisionNumber: 1,
+                      timestamp: now,
+                      author: 'ai-evaluator',
+                      comment: p.comment,
+                      category: p.category,
+                      status: 'open',
+                    },
+                  ],
+                };
+                tempProject = {
+                  ...tempProject,
+                  screens: {
+                    ...tempProject.screens,
+                    [sc.id]: {
+                      ...tempProject.screens[sc.id],
+                      annotations: [...tempProject.screens[sc.id].annotations, created],
+                    },
                   },
-                ],
-              }));
+                };
+                return created;
+              });
               totalAddedPins += newPins.length;
 
               const updatedVariants = sc.variants.map((v) => {
@@ -1181,6 +1536,7 @@ export const useStudioStore = create<StudioState>()(
                     ...s.project.screens,
                     [target.id]: {
                       ...sc,
+                      status: 'idle',
                       evaluation: res.data.report,
                       variants: updatedVariants,
                       annotations: [...sc.annotations, ...newPins],
@@ -1192,14 +1548,20 @@ export const useStudioStore = create<StudioState>()(
             });
           }
 
-          set({ isBusy: false, busyLabel: null });
           get().showToast(
-            `UX Eval complete (${totalAddedPins} AI critique pin${totalAddedPins === 1 ? '' : 's'} · ${totalTok.toLocaleString()} tok)`,
+            `UX Eval complete (${totalAddedPins} new versioned AI pin${totalAddedPins === 1 ? '' : 's'})`,
             'success'
           );
         } catch (err) {
+          if (!isAbortError(err)) {
+            get().showToast(`UX Eval failed: ${(err as Error).message}`, 'warning');
+          }
+        } finally {
+          asyncJobs.finishJob(jobId);
+          for (const t of targets) {
+            get().setScreenStatus(t.id, 'idle');
+          }
           set({ isBusy: false, busyLabel: null });
-          get().showToast(`Evaluation error: ${(err as Error).message}`, 'warning');
         }
       },
 
@@ -1216,52 +1578,62 @@ export const useStudioStore = create<StudioState>()(
           };
         });
         get().showToast(
-          `Recorded traversal (${trace.steps.length} steps · ${
-            trace.completed ? 'Completed ✓' : 'Exited / Backtracked'
-          }) → Updated Beta(α,β) weights`,
+          `Recorded traversal (${trace.steps.length} steps) → Updated Beta(α,β) weights`,
           'success'
         );
       },
 
-      runPersonaSimulation: () => {
-        const traces = runSimulatedPersonas(get().project);
-        let screens = get().project.screens;
-        let edges = get().project.edges;
-
-        for (const t of traces) {
-          const res = applyTraceToGraph(screens, edges, t);
-          screens = res.screens;
-          edges = res.edges;
-        }
-
-        const completedCount = traces.filter((t) => t.completed).length;
+      recordTokenUsage: (entry) =>
         set((s) => ({
           project: {
             ...s.project,
-            screens,
-            edges,
-            traces: [...traces, ...s.project.traces].slice(0, 40),
-            tokenLedger: [
-              ...s.project.tokenLedger,
-              {
-                id: uid('tok'),
-                timestamp: Date.now(),
-                action: 'simulate-personas',
-                priority: 'core',
-                model: s.settings.models.standard,
-                promptTokens: 1120,
-                outputTokens: 840,
-                thoughtTokens: 0,
-                totalTokens: 1960,
-              },
-            ],
+            tokenLedger: [...s.project.tokenLedger, entry],
           },
+        })),
+
+      runPersonaSimulation: async () => {
+        const jobId = 'persona-sim';
+        const signal = asyncJobs.startJob(jobId);
+
+        set((s) => ({
+          isBusy: true,
+          busyLabel: `Simulating personas (${s.settings.llmTasks.PERSONA_SIM.model} · ${s.settings.llmTasks.PERSONA_SIM.thinkingLevel})...`,
         }));
 
-        get().showToast(
-          `Simulated ${traces.length} user personas (${completedCount}/${traces.length} completed) → Updated Workflow Graph rewards`,
-          'success'
-        );
+        try {
+          const res = await simulatePersonasWithAI(get().project, get().settings, signal);
+          let screens = get().project.screens;
+          let edges = get().project.edges;
+
+          for (const t of res.data) {
+            const updated = applyTraceToGraph(screens, edges, t);
+            screens = updated.screens;
+            edges = updated.edges;
+          }
+
+          const completedCount = res.data.filter((t) => t.completed).length;
+          set((s) => ({
+            project: {
+              ...s.project,
+              screens,
+              edges,
+              traces: [...res.data, ...s.project.traces].slice(0, 40),
+              tokenLedger: [...s.project.tokenLedger, res.usage],
+            },
+          }));
+
+          get().showToast(
+            `Simulated ${res.data.length} personas (${completedCount}/${res.data.length} completed)`,
+            'success'
+          );
+        } catch (err) {
+          if (!isAbortError(err)) {
+            get().showToast(`Persona simulation error: ${(err as Error).message}`, 'warning');
+          }
+        } finally {
+          asyncJobs.finishJob(jobId);
+          set({ isBusy: false, busyLabel: null });
+        }
       },
 
       applyCompiledGraphWinners: () => {
@@ -1301,17 +1673,21 @@ export const useStudioStore = create<StudioState>()(
         });
 
         get().showToast(
-          `Compiled Tree → Graph: Locked ${lockedCount} proven Exploit screen(s), focused Explore budget on ${compiled.bottleneckScreenIds.length} bottleneck(s)`,
+          `Compiled Tree → Locked ${lockedCount} Exploit winner(s), focused Explore on ${compiled.bottleneckScreenIds.length} bottleneck(s)`,
           'success'
         );
       },
 
       resetProject: () => {
+        asyncJobs.cancelAll();
         set({
           project: createStarterProject(),
           activeTool: 'select',
           compareScreenId: null,
+          pendingPinDraft: null,
           isPlayModeOpen: false,
+          isBusy: false,
+          busyLabel: null,
         });
         get().showToast('Reset to RoastCraft starter project', 'info');
       },
@@ -1320,8 +1696,46 @@ export const useStudioStore = create<StudioState>()(
       name: 'forkcast-studio-v1',
       partialize: (state) => ({
         project: state.project,
-        settings: state.settings,
+        chatMessages: state.chatMessages.slice(-40),
+        rightRailMode: state.rightRailMode,
+        settings: {
+          apiKey: state.settings.apiKey === getEnvApiKey() ? '' : state.settings.apiKey,
+          useMockFallback: state.settings.useMockFallback,
+        },
       }),
+      merge: (persisted, current) => {
+        const p = persisted as Partial<StudioState> | undefined;
+        const envDefaults = loadEnvRuntimeSettings();
+        const savedKey = p?.settings?.apiKey?.trim() || '';
+        const resolvedKey = savedKey || envDefaults.apiKey;
+        const usedEnvKey = !savedKey && Boolean(envDefaults.apiKey);
+
+        // Reset any stale 'generating'/'evaluating' status saved mid-flight in localStorage
+        const hydratedProject = p?.project
+          ? { ...current.project, ...p.project }
+          : current.project;
+        const cleanedScreens: Record<string, ScreenNode> = {};
+        for (const [id, sc] of Object.entries(hydratedProject.screens)) {
+          cleanedScreens[id] = sc.status !== 'idle' ? { ...sc, status: 'idle' } : sc;
+        }
+
+        return {
+          ...current,
+          rightRailMode: p?.rightRailMode ?? current.rightRailMode,
+          project: { ...hydratedProject, screens: cleanedScreens },
+          chatMessages:
+            p?.chatMessages && p.chatMessages.length > 0
+              ? p.chatMessages
+              : current.chatMessages,
+          settings: {
+            ...envDefaults,
+            apiKey: resolvedKey,
+            useMockFallback: usedEnvKey
+              ? envDefaults.useMockFallback
+              : (p?.settings?.useMockFallback ?? !resolvedKey),
+          },
+        };
+      },
     }
   )
 );

@@ -5,14 +5,17 @@ import {
   Hand,
   Layers,
   Link2,
+  Loader2,
   Monitor,
   MousePointer2,
   Paintbrush,
+  PanelLeft,
   Pin,
   Play,
   Settings,
   Smartphone,
   Sparkles,
+  Square,
   Users,
   Workflow,
 } from 'lucide-react';
@@ -30,10 +33,10 @@ const VIEWS: Array<{ id: CanvasViewMode; label: string }> = [
 const TOOLS: Array<{ id: StudioTool; label: string; keyHint: string; icon: React.ReactNode }> = [
   { id: 'select', label: 'Select', keyHint: 'V', icon: <MousePointer2 className="w-3.5 h-3.5" /> },
   { id: 'pan', label: 'Pan', keyHint: 'H', icon: <Hand className="w-3.5 h-3.5" /> },
-  { id: 'point', label: 'Point Pin', keyHint: 'C', icon: <Pin className="w-3.5 h-3.5" /> },
-  { id: 'paint', label: 'Paint & Speak', keyHint: 'B', icon: <Paintbrush className="w-3.5 h-3.5" /> },
-  { id: 'connect', label: 'Connect', keyHint: 'L', icon: <Link2 className="w-3.5 h-3.5" /> },
-  { id: 'play', label: 'Play / Test', keyHint: 'P', icon: <Play className="w-3.5 h-3.5" /> },
+  { id: 'point', label: 'Pin', keyHint: 'C', icon: <Pin className="w-3.5 h-3.5" /> },
+  { id: 'paint', label: 'Paint', keyHint: 'B', icon: <Paintbrush className="w-3.5 h-3.5" /> },
+  { id: 'connect', label: 'Wire', keyHint: 'L', icon: <Link2 className="w-3.5 h-3.5" /> },
+  { id: 'play', label: 'Play', keyHint: 'P', icon: <Play className="w-3.5 h-3.5" /> },
 ];
 
 export const TopToolbar: React.FC = () => {
@@ -41,11 +44,14 @@ export const TopToolbar: React.FC = () => {
   const settings = useStudioStore((s) => s.settings);
   const activeTool = useStudioStore((s) => s.activeTool);
   const isBusy = useStudioStore((s) => s.isBusy);
+  const isLeftSidebarOpen = useStudioStore((s) => s.isLeftSidebarOpen);
 
   const setActiveTool = useStudioStore((s) => s.setActiveTool);
   const setCanvasView = useStudioStore((s) => s.setCanvasView);
   const setDevicePreset = useStudioStore((s) => s.setDevicePreset);
   const setSettingsOpen = useStudioStore((s) => s.setSettingsOpen);
+  const setLeftSidebarOpen = useStudioStore((s) => s.setLeftSidebarOpen);
+  const cancelActiveAiJob = useStudioStore((s) => s.cancelActiveAiJob);
   const runUXEval = useStudioStore((s) => s.runUXEval);
   const runPersonaSimulation = useStudioStore((s) => s.runPersonaSimulation);
 
@@ -53,22 +59,32 @@ export const TopToolbar: React.FC = () => {
   const isLive = Boolean(settings.apiKey.trim()) && !settings.useMockFallback;
 
   return (
-    <header className="h-12 px-3 bg-[#18181c] border-b border-[#2b2b33] flex items-center justify-between gap-3 shrink-0 z-30 select-none">
-      {/* Left: Brand, Project Name & View Switcher */}
-      <div className="flex items-center gap-2.5 min-w-0">
-        <div className="flex items-center gap-2 shrink-0">
+    <header className="h-12 px-2.5 bg-[#18181c] border-b border-[#2b2b33] flex items-center justify-between gap-2 shrink-0 z-30 select-none overflow-x-auto">
+      {/* Left: Sidebar Toggle, Brand & View Switcher */}
+      <div className="flex items-center gap-2 shrink-0">
+        <button
+          type="button"
+          onClick={() => setLeftSidebarOpen(!isLeftSidebarOpen)}
+          title="Toggle Left Layers & Budget Sidebar"
+          className={`p-1.5 rounded-lg border transition ${
+            isLeftSidebarOpen
+              ? 'bg-zinc-800 border-zinc-700 text-zinc-100'
+              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <PanelLeft className="w-3.5 h-3.5" />
+        </button>
+
+        <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-400 to-violet-500 flex items-center justify-center text-zinc-950 font-black text-xs shadow">
             <Workflow className="w-4 h-4" />
           </div>
           <div className="leading-tight hidden xl:block">
             <div className="text-xs font-bold tracking-tight text-zinc-100">Forkcast Studio</div>
-            <div className="text-[10px] text-zinc-400 truncate max-w-[155px]">{project.name}</div>
+            <div className="text-[10px] text-zinc-400 truncate max-w-[140px]">{project.name}</div>
           </div>
         </div>
 
-        <div className="h-5 w-px bg-zinc-800" />
-
-        {/* View Switcher */}
         <div className="flex items-center bg-[#121215] border border-zinc-800 rounded-lg p-0.5">
           {VIEWS.map((v) => (
             <button
@@ -88,7 +104,6 @@ export const TopToolbar: React.FC = () => {
           ))}
         </div>
 
-        {/* Desktop / Mobile Viewport Toggle */}
         <div className="flex items-center bg-[#121215] border border-zinc-800 rounded-lg p-0.5">
           <button
             type="button"
@@ -117,8 +132,8 @@ export const TopToolbar: React.FC = () => {
         </div>
       </div>
 
-      {/* Center: Figma Tool Dock */}
-      <div className="flex items-center gap-1 bg-[#121215] border border-zinc-800 rounded-xl p-1">
+      {/* Center: Tool Dock */}
+      <div className="flex items-center gap-0.5 bg-[#121215] border border-zinc-800 rounded-xl p-1 shrink-0">
         {TOOLS.map((t) => {
           const isActive = activeTool === t.id;
           return (
@@ -127,7 +142,7 @@ export const TopToolbar: React.FC = () => {
               type="button"
               onClick={() => setActiveTool(t.id)}
               title={`${t.label} (${t.keyHint})`}
-              className={`px-2 py-1 rounded-lg text-[11px] font-medium flex items-center gap-1.5 transition ${
+              className={`px-2 py-1 rounded-lg text-[11px] font-medium flex items-center gap-1 transition ${
                 isActive
                   ? t.id === 'paint'
                     ? 'bg-pink-600 text-white shadow'
@@ -145,14 +160,13 @@ export const TopToolbar: React.FC = () => {
         })}
       </div>
 
-      {/* Right: Budget Meter, Persona Sim, UX Eval & Settings */}
-      <div className="flex items-center gap-2 shrink-0">
-        {/* Live Token Budget Pill */}
+      {/* Right: Budget, Actions, Stop & Settings */}
+      <div className="flex items-center gap-1.5 shrink-0">
         <div
           title={`Session token spend: ${budget.totalSpent.toLocaleString()} / ${budget.totalBudget.toLocaleString()} (${budget.coreShareOfSpend}% on Core UX Focus)`}
-          className="hidden md:flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[#121215] border border-zinc-800"
+          className="hidden xl:flex items-center gap-2 px-2 py-1 rounded-lg bg-[#121215] border border-zinc-800"
         >
-          <div className="w-16 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+          <div className="w-12 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
             <div
               className="h-full bg-gradient-to-r from-violet-500 to-emerald-400 rounded-full transition-all"
               style={{ width: `${Math.max(4, budget.percentUsed)}%` }}
@@ -161,31 +175,40 @@ export const TopToolbar: React.FC = () => {
           <span className="text-[10px] font-mono text-zinc-300">
             {formatTokens(budget.totalSpent)}/{formatTokens(budget.totalBudget)}
           </span>
-          <span className="text-[10px] font-mono text-violet-300 font-semibold">
-            {budget.coreShareOfSpend}% Core
-          </span>
         </div>
+
+        {isBusy && (
+          <button
+            type="button"
+            onClick={cancelActiveAiJob}
+            title="Cancel active Gemini 4 call"
+            className="px-2 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-200 text-[11px] font-semibold flex items-center gap-1"
+          >
+            <Loader2 className="w-3 h-3 animate-spin" />
+            <Square className="w-2.5 h-2.5 fill-current" />
+          </button>
+        )}
 
         <button
           type="button"
           disabled={isBusy}
           onClick={runPersonaSimulation}
-          title="1-click Persona Simulation: generate 5 empirical traversal traces & update Beta(α,β) weights"
-          className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-100 text-[11px] font-medium flex items-center gap-1.5 disabled:opacity-40 transition"
+          title="Simulate 4 User Personas"
+          className="px-2 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-100 text-[11px] font-medium flex items-center gap-1 disabled:opacity-40 transition"
         >
           <Users className="w-3.5 h-3.5 text-emerald-400" />
-          <span className="hidden xl:inline">Simulate Personas</span>
+          <span className="hidden 2xl:inline">Personas</span>
         </button>
 
         <button
           type="button"
           disabled={isBusy}
           onClick={() => runUXEval(project.selectedScreenId ?? undefined)}
-          title="Run Multimodal UX Evaluation on selected screen (or Final Flow)"
-          className="px-2.5 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-[11px] font-semibold flex items-center gap-1.5 disabled:opacity-40 shadow transition"
+          title="Run Multimodal UX Evaluation"
+          className="px-2.5 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-[11px] font-semibold flex items-center gap-1 disabled:opacity-40 shadow transition"
         >
           <Sparkles className="w-3.5 h-3.5" />
-          <span className="hidden lg:inline">UX Eval</span>
+          <span className="hidden md:inline">UX Eval</span>
         </button>
 
         <button
@@ -196,10 +219,10 @@ export const TopToolbar: React.FC = () => {
               ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25'
               : 'bg-zinc-900 border-zinc-700 text-zinc-300 hover:bg-zinc-800'
           }`}
-          title="Configure Gemini API Key, Model Tiers & Demo Fallback"
+          title="Gemini 4 Models, Thinking Levels & .env Settings"
         >
           <Activity className="w-3 h-3" />
-          <span className="hidden sm:inline">{isLive ? 'Gemini Live' : 'Demo Mode'}</span>
+          <span className="hidden md:inline">{isLive ? 'Gemini 4 Live' : 'Demo'}</span>
           <Settings className="w-3.5 h-3.5 opacity-75" />
         </button>
       </div>

@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { Check, EyeOff, Paintbrush, Pin, Sparkles } from 'lucide-react';
 import type { ScreenAnnotation } from '../types/studio';
+import { formatVersionedRef } from '../domain/annotations';
 
 interface AnnotationLayerProps {
   annotations: ScreenAnnotation[];
   activeVariantId: string | null;
   onToggleIncludeInAi: (annotationId: string) => void;
   onSelectScreen: () => void;
+  onMentionInChat?: (versionedToken: string) => void;
 }
 
 export const AnnotationLayer: React.FC<AnnotationLayerProps> = ({
@@ -14,10 +16,10 @@ export const AnnotationLayer: React.FC<AnnotationLayerProps> = ({
   activeVariantId,
   onToggleIncludeInAi,
   onSelectScreen,
+  onMentionInChat,
 }) => {
   const [openId, setOpenId] = useState<string | null>(null);
 
-  // Show annotations belonging to this screen (highlighting ones for current variant)
   const visible = annotations.filter(
     (a) => !activeVariantId || a.variantId === activeVariantId || a.status === 'open'
   );
@@ -31,6 +33,7 @@ export const AnnotationLayer: React.FC<AnnotationLayerProps> = ({
         const isIncluded = ann.includeInAiFeedback;
         const isAi = ann.author === 'ai-evaluator';
         const isOpen = openId === ann.id;
+        const versionedToken = formatVersionedRef(ann);
 
         return (
           <React.Fragment key={ann.id}>
@@ -57,7 +60,7 @@ export const AnnotationLayer: React.FC<AnnotationLayerProps> = ({
                 }`}
               >
                 <span
-                  className={`absolute -top-2.5 left-1.5 px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold flex items-center gap-1 shadow ${
+                  className={`absolute -top-2.5 left-1.5 px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold flex items-center gap-1 shadow whitespace-nowrap ${
                     isResolved
                       ? 'bg-emerald-600 text-white'
                       : isIncluded
@@ -65,7 +68,8 @@ export const AnnotationLayer: React.FC<AnnotationLayerProps> = ({
                       : 'bg-zinc-800 text-zinc-300 border border-zinc-600'
                   }`}
                 >
-                  <Paintbrush className="w-2.5 h-2.5" />@{ann.mentionTag}
+                  <Paintbrush className="w-2.5 h-2.5" />
+                  {versionedToken}
                   {!isIncluded && !isResolved && ' · AI off'}
                 </span>
               </div>
@@ -84,7 +88,7 @@ export const AnnotationLayer: React.FC<AnnotationLayerProps> = ({
                   left: `${ann.xPercent}%`,
                   top: `${ann.yPercent}%`,
                 }}
-                title={`@${ann.mentionTag} (v${ann.revisions.length}): ${ann.comment}`}
+                title={`${versionedToken}: ${ann.comment}`}
                 className={`pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center shadow-lg border-2 transition hover:scale-115 ${
                   isResolved
                     ? 'bg-emerald-600 border-emerald-200 text-white'
@@ -105,26 +109,26 @@ export const AnnotationLayer: React.FC<AnnotationLayerProps> = ({
               </button>
             )}
 
-            {/* Compact inline Figma comment popover */}
+            {/* Compact inline Figma comment popover (clamped safely inside viewport) */}
             {isOpen && (
               <div
                 onClick={(e) => e.stopPropagation()}
                 style={{
-                  left: `${Math.min(58, Math.max(4, ann.xPercent))}%`,
-                  top: `${Math.min(62, Math.max(8, ann.yPercent + 6))}%`,
+                  left: `${Math.min(44, Math.max(3, ann.xPercent))}%`,
+                  top: `${Math.min(48, Math.max(6, ann.yPercent + 5))}%`,
                 }}
-                className="pointer-events-auto nodrag nopan absolute z-40 w-56 rounded-xl bg-[#18181d] border border-zinc-700 p-2.5 shadow-2xl text-left space-y-1.5"
+                className="pointer-events-auto nodrag nopan absolute z-40 w-52 max-h-36 overflow-y-auto rounded-xl bg-[#18181d] border border-zinc-700 p-2.5 shadow-2xl text-left space-y-1.5"
               >
                 <div className="flex items-center justify-between gap-1">
                   <span className="text-[10px] font-mono font-semibold text-blue-300">
-                    @{ann.mentionTag} · v{ann.revisions.length}
+                    {versionedToken}
                   </span>
                   <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300">
                     {ann.category}
                   </span>
                 </div>
-                <p className="text-[11px] text-zinc-200 leading-snug">{ann.comment}</p>
-                <div className="flex items-center justify-between pt-1 border-t border-zinc-800">
+                <p className="text-[11px] text-zinc-200 leading-snug break-words">{ann.comment}</p>
+                <div className="flex items-center justify-between pt-1 border-t border-zinc-800 gap-1">
                   <button
                     type="button"
                     onClick={() => onToggleIncludeInAi(ann.id)}
@@ -135,15 +139,29 @@ export const AnnotationLayer: React.FC<AnnotationLayerProps> = ({
                     }`}
                   >
                     {!isIncluded && <EyeOff className="w-2.5 h-2.5" />}
-                    {isIncluded ? 'Included in AI ✓' : 'Excluded from AI'}
+                    {isIncluded ? 'AI on' : 'AI off'}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setOpenId(null)}
-                    className="text-[10px] text-zinc-400 hover:text-zinc-200"
-                  >
-                    Close
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    {onMentionInChat && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onMentionInChat(versionedToken);
+                          setOpenId(null);
+                        }}
+                        className="text-[10px] font-mono text-blue-300 hover:text-blue-200"
+                      >
+                        +Chat
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setOpenId(null)}
+                      className="text-[10px] text-zinc-400 hover:text-zinc-200"
+                    >
+                      Close
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

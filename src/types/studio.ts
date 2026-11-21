@@ -233,6 +233,31 @@ export interface BudgetConfig {
   tierPolicies: Record<PriorityTier, TierPolicy>;
 }
 
+export type ThinkingLevelSetting = 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH';
+
+export type LlmTaskKey =
+  | 'DISAMBIGUATE'
+  | 'FLOW_ARCHITECT'
+  | 'VARIANT_CORE'
+  | 'VARIANT_STANDARD'
+  | 'VARIANT_SUPPORTING'
+  | 'REFINE_CORE'
+  | 'REFINE_SMALL'
+  | 'UX_EVAL_CORE'
+  | 'UX_EVAL_LIGHT'
+  | 'PERSONA_SIM'
+  | 'VOICE_TRANSCRIBE';
+
+export interface LlmTaskConfig {
+  key: LlmTaskKey;
+  label: string;
+  stakes: 'high' | 'medium' | 'low';
+  description: string;
+  model: string;
+  thinkingLevel: ThinkingLevelSetting;
+  envPrefix: string;
+}
+
 export interface TokenUsageEntry {
   id: string;
   timestamp: number;
@@ -242,10 +267,13 @@ export interface TokenUsageEntry {
     | 'generate-variant'
     | 'point-paint-refine'
     | 'ux-eval'
-    | 'simulate-personas';
+    | 'simulate-personas'
+    | 'voice-transcribe';
+  taskKey?: LlmTaskKey;
   screenId?: string;
   priority: PriorityTier;
   model: string;
+  thinkingLevel?: ThinkingLevelSetting;
   promptTokens: number;
   outputTokens: number;
   thoughtTokens: number;
@@ -255,9 +283,41 @@ export interface TokenUsageEntry {
 export interface RuntimeSettings {
   apiKey: string;
   useMockFallback: boolean;
-  models: {
-    core: string;
-    standard: string;
-    supporting: string;
+  includeThoughts: boolean;
+  llmTasks: Record<LlmTaskKey, LlmTaskConfig>;
+}
+
+export interface PendingPinDraft {
+  screenId: string;
+  variantId: string;
+  xPercent: number;
+  yPercent: number;
+  selector: string;
+  tagName: string;
+  textSnippet: string;
+  boundingBox: { x: number; y: number; w: number; h: number };
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'error';
+  timestamp: number;
+  text: string;
+  attachedMentions?: string[];
+  excludedAnnotationCount?: number;
+  targetScreenId?: string;
+  targetScreenSlug?: string;
+  createdVariantId?: string;
+  createdVariantLabel?: string;
+  resolvedMentionTags?: string[];
+  modelUsed?: string;
+  thinkingLevel?: ThinkingLevelSetting;
+  usedMock?: boolean;
+  tokens?: {
+    prompt: number;
+    output: number;
+    thought: number;
+    total: number;
   };
+  retryPrompt?: string;
 }
