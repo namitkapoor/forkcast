@@ -19,6 +19,7 @@ import { Properties, RightPanel, type PropertiesProps, type ReplayState } from "
 import { Chat, type ChatMsg } from "./ui/Chat";
 import { Layers } from "./ui/Layers";
 import { TestsPage } from "./ui/pages/TestsPage";
+import { JourneysPage } from "./ui/journeys/JourneysPage";
 import { Dock, HelpOverlay, Toolbar, TopBar, Toasts, type Page, type Toast } from "./ui/Chrome";
 import { IconChat, IconLayers, IconPanel } from "./ui/icons";
 import { loadAnnotations, mergeAnnotations, prefersReducedMotion, saveAnnotations } from "./ui/storage";
@@ -46,7 +47,11 @@ interface Snapshot {
   versions: Record<string, VersionState>;
 }
 
-const pageFromHash = (): Page => (typeof window !== "undefined" && window.location.hash === "#tests" ? "tests" : "flow");
+// Journeys is the default page (no hash); Flow and Tests keep their own hash.
+const pageFromHash = (): Page => {
+  const h = typeof window !== "undefined" ? window.location.hash : "";
+  return h === "#tests" ? "tests" : h === "#flow" ? "flow" : "journeys";
+};
 const uid = (p: string) => `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
 function Shell() {
@@ -109,7 +114,7 @@ function Shell() {
   const setPage = useCallback((p: Page) => {
     setPageState(p);
     try {
-      window.history.replaceState(null, "", p === "tests" ? "#tests" : window.location.pathname + window.location.search);
+      window.history.replaceState(null, "", p === "journeys" ? window.location.pathname + window.location.search : `#${p}`);
     } catch {
       /* ignore */
     }
@@ -1082,6 +1087,12 @@ function Shell() {
             <Toolbar tool={spaceHeld ? "hand" : tool} onTool={onToolChange} />
             <Dock canUndo={undoStack.length > 0} canRedo={redoStack.length > 0} onUndo={undo} onRedo={redo} onIn={zoomIn} onOut={zoomOut} onFit={fit} onHelp={() => setHelp(true)} />
           </>
+        )}
+
+        {page === "journeys" && (
+          <main className="page">
+            <JourneysPage />
+          </main>
         )}
 
         {page === "tests" && derived && (

@@ -1,0 +1,4113 @@
+{
+ "version": 1,
+ "createdAt": "2026-11-21T12:00:00.000Z",
+ "models": {
+  "generator": "sample (hand-built)",
+  "simulator": "sample (hand-built)"
+ },
+ "personas": [
+  {
+   "id": "family",
+   "label": "Family of 4 · phone · EUR",
+   "context": {
+    "party": "family",
+    "pax": "4",
+    "surface": "inline",
+    "currency": "EUR",
+    "origin": "LHR"
+   },
+   "style": "Parent booking for two adults and two kids. Cares about the total price and sitting together. Short messages typed on a phone."
+  },
+  {
+   "id": "solo",
+   "label": "Solo business · desktop · USD",
+   "context": {
+    "party": "solo",
+    "pax": "1",
+    "surface": "fullscreen",
+    "currency": "USD",
+    "origin": "JFK"
+   },
+   "style": "Business traveler. Wants a nonstop and a sensible arrival time, decides fast, rarely browses."
+  },
+  {
+   "id": "budget-couple",
+   "label": "Budget couple · phone · GBP",
+   "context": {
+    "party": "couple",
+    "pax": "2",
+    "surface": "inline",
+    "currency": "GBP",
+    "origin": "MAN"
+   },
+   "style": "Couple on a tight budget. Will trade convenience for price, asks follow-up questions, may give up if extras pile on."
+  }
+ ],
+ "queries": [
+  {
+   "id": "cheapest-morning",
+   "text": "Cheapest morning flight to Lisbon in March",
+   "constraints": {
+    "destination": "LIS",
+    "month": "2027-03",
+    "departAfter": "05:00",
+    "departBefore": "12:00",
+    "sort": "price"
+   },
+   "hero": true
+  },
+  {
+   "id": "nonstop-14th",
+   "text": "Nonstop to Lisbon on March 14, arriving before lunch",
+   "constraints": {
+    "destination": "LIS",
+    "date": "2027-03-14",
+    "maxStops": 0,
+    "departBefore": "10:00",
+    "sort": "depart"
+   }
+  }
+ ],
+ "journeys": [
+  {
+   "id": "cheapest-morning:family:0",
+   "queryId": "cheapest-morning",
+   "personaId": "family",
+   "run": 0,
+   "turns": [
+    {
+     "index": 0,
+     "userMessage": "cheapest morning flight to lisbon in march, 2 adults 2 kids",
+     "intent": "search",
+     "ingredients": {
+      "context": {
+       "party": "family",
+       "pax": "4",
+       "surface": "inline",
+       "currency": "EUR",
+       "origin": "LHR"
+      },
+      "history": [],
+      "toolResults": [
+       {
+        "tool": "search_fares",
+        "args": {
+         "destination": "LIS",
+         "month": "2027-03",
+         "departAfter": "05:00",
+         "departBefore": "12:00",
+         "sort": "price",
+         "origin": "LHR",
+         "pax": 4,
+         "currency": "EUR"
+        },
+        "fares": [
+         {
+          "flightId": "IB4610",
+          "airline": "Iberia",
+          "origin": "LHR",
+          "destination": "LIS",
+          "date": "2027-03-07",
+          "depart": "07:10",
+          "arrive": "11:25",
+          "stops": 1,
+          "pricePerPax": 54,
+          "currency": "EUR",
+          "total": 216,
+          "pax": 4
+         },
+         {
+          "flightId": "FR6190",
+          "airline": "Ryanair",
+          "origin": "LHR",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "06:40",
+          "arrive": "11:00",
+          "stops": 1,
+          "pricePerPax": 69,
+          "currency": "EUR",
+          "total": 276,
+          "pax": 4
+         },
+         {
+          "flightId": "IB9886",
+          "airline": "Iberia",
+          "origin": "LHR",
+          "destination": "LIS",
+          "date": "2027-03-21",
+          "depart": "06:40",
+          "arrive": "09:21",
+          "stops": 0,
+          "pricePerPax": 69,
+          "currency": "EUR",
+          "total": 276,
+          "pax": 4
+         },
+         {
+          "flightId": "BA8726",
+          "airline": "British Airways",
+          "origin": "LHR",
+          "destination": "LIS",
+          "date": "2027-03-21",
+          "depart": "07:10",
+          "arrive": "09:41",
+          "stops": 0,
+          "pricePerPax": 69,
+          "currency": "EUR",
+          "total": 276,
+          "pax": 4
+         },
+         {
+          "flightId": "U25369",
+          "airline": "easyJet",
+          "origin": "LHR",
+          "destination": "LIS",
+          "date": "2027-03-21",
+          "depart": "06:05",
+          "arrive": "08:54",
+          "stops": 0,
+          "pricePerPax": 71,
+          "currency": "EUR",
+          "total": 284,
+          "pax": 4
+         },
+         {
+          "flightId": "BA3693",
+          "airline": "British Airways",
+          "origin": "LHR",
+          "destination": "LIS",
+          "date": "2027-03-07",
+          "depart": "06:05",
+          "arrive": "08:53",
+          "stops": 0,
+          "pricePerPax": 74,
+          "currency": "EUR",
+          "total": 296,
+          "pax": 4
+         },
+         {
+          "flightId": "FR1094",
+          "airline": "Ryanair",
+          "origin": "LHR",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "07:10",
+          "arrive": "09:59",
+          "stops": 0,
+          "pricePerPax": 75,
+          "currency": "EUR",
+          "total": 300,
+          "pax": 4
+         },
+         {
+          "flightId": "IB6737",
+          "airline": "Iberia",
+          "origin": "LHR",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "06:05",
+          "arrive": "08:47",
+          "stops": 0,
+          "pricePerPax": 77,
+          "currency": "EUR",
+          "total": 308,
+          "pax": 4
+         }
+        ]
+       }
+      ],
+      "carry": {
+       "pax": 4,
+       "currency": "EUR"
+      },
+      "promptVersion": "gen-v3.2"
+     },
+     "screen": {
+      "id": "cheapest-morning:family:0:t0",
+      "nodeId": "search",
+      "context": {
+       "party": "family",
+       "pax": "4",
+       "surface": "inline",
+       "currency": "EUR",
+       "origin": "LHR"
+      },
+      "variant": "hero-pick-plus-cards",
+      "rationale": "Phone surface: one fare per card, big tap targets.",
+      "messages": [
+       {
+        "version": "v0.9",
+        "createSurface": {
+         "surfaceId": "cheapest-morning-family-0-t0",
+         "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+        }
+       },
+       {
+        "version": "v0.9",
+        "updateComponents": {
+         "surfaceId": "cheapest-morning-family-0-t0",
+         "components": [
+          {
+           "id": "root",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "title",
+            "sub",
+            "best",
+            "fare_0",
+            "fare_1",
+            "fare_2"
+           ]
+          },
+          {
+           "id": "title",
+           "component": "Text",
+           "text": "Morning flights to Lisbon",
+           "variant": "h4"
+          },
+          {
+           "id": "sub",
+           "component": "Text",
+           "text": "4 travelers · from LHR · March",
+           "variant": "caption"
+          },
+          {
+           "id": "best",
+           "component": "Card",
+           "child": "best_col"
+          },
+          {
+           "id": "best_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "best_label",
+            "best_flight",
+            "best_time",
+            "best_price",
+            "best_btn"
+           ]
+          },
+          {
+           "id": "best_label",
+           "component": "Text",
+           "text": "Cheapest morning pick",
+           "variant": "caption"
+          },
+          {
+           "id": "best_flight",
+           "component": "Text",
+           "text": "**IB4610** · Iberia · Sun 7 Mar"
+          },
+          {
+           "id": "best_time",
+           "component": "Text",
+           "text": "Departs 09:15 · 1 stop"
+          },
+          {
+           "id": "best_price",
+           "component": "Text",
+           "text": "**€216** for 4 · €54 each"
+          },
+          {
+           "id": "best_btn",
+           "component": "Button",
+           "child": "best_btn_t",
+           "variant": "primary",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "IB4610"
+             }
+            }
+           }
+          },
+          {
+           "id": "best_btn_t",
+           "component": "Text",
+           "text": "Choose IB4610"
+          },
+          {
+           "id": "fare_0",
+           "component": "Card",
+           "child": "fare_0_col"
+          },
+          {
+           "id": "fare_0_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "fare_0_top",
+            "fare_0_meta",
+            "fare_0_btn"
+           ]
+          },
+          {
+           "id": "fare_0_top",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_0_flight",
+            "fare_0_total"
+           ]
+          },
+          {
+           "id": "fare_0_flight",
+           "component": "Text",
+           "text": "**FR6190** · Ryanair"
+          },
+          {
+           "id": "fare_0_total",
+           "component": "Text",
+           "text": "**€276**"
+          },
+          {
+           "id": "fare_0_meta",
+           "component": "Text",
+           "text": "Sun 14 Mar · 06:40 → 11:00 · 1 stop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_0_btn",
+           "component": "Button",
+           "child": "fare_0_btn_t",
+           "variant": "default",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "FR6190"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_0_btn_t",
+           "component": "Text",
+           "text": "Select"
+          },
+          {
+           "id": "fare_1",
+           "component": "Card",
+           "child": "fare_1_col"
+          },
+          {
+           "id": "fare_1_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "fare_1_top",
+            "fare_1_meta",
+            "fare_1_btn"
+           ]
+          },
+          {
+           "id": "fare_1_top",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_1_flight",
+            "fare_1_total"
+           ]
+          },
+          {
+           "id": "fare_1_flight",
+           "component": "Text",
+           "text": "**IB9886** · Iberia"
+          },
+          {
+           "id": "fare_1_total",
+           "component": "Text",
+           "text": "**€276**"
+          },
+          {
+           "id": "fare_1_meta",
+           "component": "Text",
+           "text": "Sun 21 Mar · 06:40 → 09:21 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_1_btn",
+           "component": "Button",
+           "child": "fare_1_btn_t",
+           "variant": "default",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "IB9886"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_1_btn_t",
+           "component": "Text",
+           "text": "Select"
+          },
+          {
+           "id": "fare_2",
+           "component": "Card",
+           "child": "fare_2_col"
+          },
+          {
+           "id": "fare_2_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "fare_2_top",
+            "fare_2_meta",
+            "fare_2_btn"
+           ]
+          },
+          {
+           "id": "fare_2_top",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_2_flight",
+            "fare_2_total"
+           ]
+          },
+          {
+           "id": "fare_2_flight",
+           "component": "Text",
+           "text": "**BA8726** · British Airways"
+          },
+          {
+           "id": "fare_2_total",
+           "component": "Text",
+           "text": "**€276**"
+          },
+          {
+           "id": "fare_2_meta",
+           "component": "Text",
+           "text": "Sun 21 Mar · 07:10 → 09:41 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_2_btn",
+           "component": "Button",
+           "child": "fare_2_btn_t",
+           "variant": "default",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "BA8726"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_2_btn_t",
+           "component": "Text",
+           "text": "Select"
+          }
+         ]
+        }
+       }
+      ],
+      "model": "sample",
+      "createdAt": "2026-11-21T12:00:00.000Z",
+      "annotations": []
+     },
+     "userAction": "Tapped IB4610 €216",
+     "checks": [
+      {
+       "kind": "grounding",
+       "ok": false,
+       "message": "09:15 is not in the tool results or carried fare",
+       "componentId": "best_time",
+       "value": "09:15"
+      },
+      {
+       "kind": "carry",
+       "ok": true,
+       "message": "Nothing chosen yet"
+      },
+      {
+       "kind": "schema",
+       "ok": true,
+       "message": "Screen renders (35 components)"
+      }
+     ],
+     "ms": 2586
+    },
+    {
+     "index": 1,
+     "userMessage": "IB4610 please",
+     "intent": "select",
+     "ingredients": {
+      "context": {
+       "party": "family",
+       "pax": "4",
+       "surface": "inline",
+       "currency": "EUR",
+       "origin": "LHR"
+      },
+      "history": [
+       "user: cheapest morning flight to lisbon in march, 2 adults 2 kids",
+       "assistant showed: hero-pick-plus-cards"
+      ],
+      "toolResults": [
+       {
+        "tool": "get_fare",
+        "args": {
+         "flightId": "IB4610"
+        },
+        "fares": [
+         {
+          "flightId": "IB4610",
+          "airline": "Iberia",
+          "origin": "LHR",
+          "destination": "LIS",
+          "date": "2027-03-07",
+          "depart": "07:10",
+          "arrive": "11:25",
+          "stops": 1,
+          "pricePerPax": 54,
+          "currency": "EUR",
+          "total": 216,
+          "pax": 4
+         }
+        ]
+       }
+      ],
+      "carry": {
+       "pax": 4,
+       "currency": "EUR",
+       "flightId": "IB4610",
+       "total": 216,
+       "date": "2027-03-07",
+       "depart": "07:10"
+      },
+      "promptVersion": "gen-v3.2"
+     },
+     "screen": {
+      "id": "cheapest-morning:family:0:t1",
+      "nodeId": "select",
+      "context": {
+       "party": "family",
+       "pax": "4",
+       "surface": "inline",
+       "currency": "EUR",
+       "origin": "LHR"
+      },
+      "variant": "fare-summary-card",
+      "rationale": "Confirm the chosen fare before paying.",
+      "messages": [
+       {
+        "version": "v0.9",
+        "createSurface": {
+         "surfaceId": "cheapest-morning-family-0-t1",
+         "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+        }
+       },
+       {
+        "version": "v0.9",
+        "updateComponents": {
+         "surfaceId": "cheapest-morning-family-0-t1",
+         "components": [
+          {
+           "id": "root",
+           "component": "Card",
+           "child": "col"
+          },
+          {
+           "id": "col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "title",
+            "route",
+            "times",
+            "div",
+            "total",
+            "each",
+            "book"
+           ]
+          },
+          {
+           "id": "title",
+           "component": "Text",
+           "text": "IB4610 · Iberia",
+           "variant": "h4"
+          },
+          {
+           "id": "route",
+           "component": "Text",
+           "text": "LHR → LIS · Sun 7 Mar",
+           "variant": "caption"
+          },
+          {
+           "id": "times",
+           "component": "Text",
+           "text": "07:10 → 11:25 · 1 stop"
+          },
+          {
+           "id": "div",
+           "component": "Divider"
+          },
+          {
+           "id": "total",
+           "component": "Text",
+           "text": "**€216** total · 4 travelers"
+          },
+          {
+           "id": "each",
+           "component": "Text",
+           "text": "€54 per person",
+           "variant": "caption"
+          },
+          {
+           "id": "book",
+           "component": "Button",
+           "child": "book_t",
+           "variant": "primary",
+           "action": {
+            "event": {
+             "name": "book",
+             "context": {
+              "flightId": "IB4610"
+             }
+            }
+           }
+          },
+          {
+           "id": "book_t",
+           "component": "Text",
+           "text": "Book €216"
+          }
+         ]
+        }
+       }
+      ],
+      "model": "sample",
+      "createdAt": "2026-11-21T12:00:00.000Z",
+      "annotations": []
+     },
+     "userAction": "Tapped Book €216",
+     "checks": [
+      {
+       "kind": "grounding",
+       "ok": true,
+       "message": "All 7 prices, times, flights and dates are in the tool results or carry"
+      },
+      {
+       "kind": "carry",
+       "ok": true,
+       "message": "Chosen IB4610 carried over unchanged"
+      },
+      {
+       "kind": "schema",
+       "ok": true,
+       "message": "Screen renders (10 components)"
+      }
+     ],
+     "ms": 3563
+    },
+    {
+     "index": 2,
+     "userMessage": "book it",
+     "intent": "confirm",
+     "ingredients": {
+      "context": {
+       "party": "family",
+       "pax": "4",
+       "surface": "inline",
+       "currency": "EUR",
+       "origin": "LHR"
+      },
+      "history": [
+       "user: cheapest morning flight to lisbon in march, 2 adults 2 kids",
+       "assistant showed: hero-pick-plus-cards",
+       "user: IB4610 please",
+       "assistant showed: fare-summary-card"
+      ],
+      "toolResults": [
+       {
+        "tool": "get_fare",
+        "args": {
+         "flightId": "IB4610"
+        },
+        "fares": [
+         {
+          "flightId": "IB4610",
+          "airline": "Iberia",
+          "origin": "LHR",
+          "destination": "LIS",
+          "date": "2027-03-07",
+          "depart": "07:10",
+          "arrive": "11:25",
+          "stops": 1,
+          "pricePerPax": 54,
+          "currency": "EUR",
+          "total": 216,
+          "pax": 4
+         }
+        ]
+       }
+      ],
+      "carry": {
+       "pax": 4,
+       "currency": "EUR",
+       "flightId": "IB4610",
+       "total": 216,
+       "date": "2027-03-07",
+       "depart": "07:10"
+      },
+      "promptVersion": "gen-v3.2"
+     },
+     "screen": {
+      "id": "cheapest-morning:family:0:t2",
+      "nodeId": "confirm",
+      "context": {
+       "party": "family",
+       "pax": "4",
+       "surface": "inline",
+       "currency": "EUR",
+       "origin": "LHR"
+      },
+      "variant": "booking-confirmed",
+      "rationale": "Close the loop: what was booked, for how much.",
+      "messages": [
+       {
+        "version": "v0.9",
+        "createSurface": {
+         "surfaceId": "cheapest-morning-family-0-t2",
+         "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+        }
+       },
+       {
+        "version": "v0.9",
+        "updateComponents": {
+         "surfaceId": "cheapest-morning-family-0-t2",
+         "components": [
+          {
+           "id": "root",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "title",
+            "ref",
+            "total",
+            "note"
+           ]
+          },
+          {
+           "id": "title",
+           "component": "Text",
+           "text": "Booked",
+           "variant": "h3"
+          },
+          {
+           "id": "ref",
+           "component": "Text",
+           "text": "**IB4610** · Sun 7 Mar · 07:10 → 11:25"
+          },
+          {
+           "id": "total",
+           "component": "Text",
+           "text": "€216 paid for 4"
+          },
+          {
+           "id": "note",
+           "component": "Text",
+           "text": "Confirmation sent to your email.",
+           "variant": "caption"
+          }
+         ]
+        }
+       }
+      ],
+      "model": "sample",
+      "createdAt": "2026-11-21T12:00:00.000Z",
+      "annotations": []
+     },
+     "userAction": "Done (booked)",
+     "checks": [
+      {
+       "kind": "grounding",
+       "ok": true,
+       "message": "All 5 prices, times, flights and dates are in the tool results or carry"
+      },
+      {
+       "kind": "carry",
+       "ok": true,
+       "message": "Chosen IB4610 carried over unchanged"
+      },
+      {
+       "kind": "schema",
+       "ok": true,
+       "message": "Screen renders (5 components)"
+      },
+      {
+       "kind": "goal",
+       "ok": true,
+       "message": "Cheapest morning fare IB4610 €216 was shown and booked"
+      }
+     ],
+     "ms": 2140
+    }
+   ],
+   "outcome": "booked",
+   "goalMet": true
+  },
+  {
+   "id": "cheapest-morning:solo:0",
+   "queryId": "cheapest-morning",
+   "personaId": "solo",
+   "run": 0,
+   "turns": [
+    {
+     "index": 0,
+     "userMessage": "Cheapest morning flight to Lisbon in March. Nonstop preferred.",
+     "intent": "search",
+     "ingredients": {
+      "context": {
+       "party": "solo",
+       "pax": "1",
+       "surface": "fullscreen",
+       "currency": "USD",
+       "origin": "JFK"
+      },
+      "history": [],
+      "toolResults": [
+       {
+        "tool": "search_fares",
+        "args": {
+         "destination": "LIS",
+         "month": "2027-03",
+         "departAfter": "05:00",
+         "departBefore": "12:00",
+         "sort": "price",
+         "origin": "JFK",
+         "pax": 1,
+         "currency": "USD"
+        },
+        "fares": [
+         {
+          "flightId": "UA2681",
+          "airline": "United",
+          "origin": "JFK",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "07:10",
+          "arrive": "15:51",
+          "stops": 1,
+          "pricePerPax": 293,
+          "currency": "USD",
+          "total": 293,
+          "pax": 1
+         },
+         {
+          "flightId": "BA6969",
+          "airline": "British Airways",
+          "origin": "JFK",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "06:40",
+          "arrive": "15:34",
+          "stops": 1,
+          "pricePerPax": 322,
+          "currency": "USD",
+          "total": 322,
+          "pax": 1
+         },
+         {
+          "flightId": "IB7362",
+          "airline": "Iberia",
+          "origin": "JFK",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "08:25",
+          "arrive": "17:12",
+          "stops": 1,
+          "pricePerPax": 366,
+          "currency": "USD",
+          "total": 366,
+          "pax": 1
+         },
+         {
+          "flightId": "BA5342",
+          "airline": "British Airways",
+          "origin": "JFK",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "06:05",
+          "arrive": "14:57",
+          "stops": 1,
+          "pricePerPax": 369,
+          "currency": "USD",
+          "total": 369,
+          "pax": 1
+         },
+         {
+          "flightId": "BA8578",
+          "airline": "British Airways",
+          "origin": "JFK",
+          "destination": "LIS",
+          "date": "2027-03-21",
+          "depart": "06:05",
+          "arrive": "13:08",
+          "stops": 0,
+          "pricePerPax": 374,
+          "currency": "USD",
+          "total": 374,
+          "pax": 1
+         },
+         {
+          "flightId": "UA9181",
+          "airline": "United",
+          "origin": "JFK",
+          "destination": "LIS",
+          "date": "2027-03-21",
+          "depart": "07:10",
+          "arrive": "14:16",
+          "stops": 0,
+          "pricePerPax": 384,
+          "currency": "USD",
+          "total": 384,
+          "pax": 1
+         },
+         {
+          "flightId": "TP1887",
+          "airline": "TAP Air Portugal",
+          "origin": "JFK",
+          "destination": "LIS",
+          "date": "2027-03-07",
+          "depart": "11:15",
+          "arrive": "20:02",
+          "stops": 1,
+          "pricePerPax": 388,
+          "currency": "USD",
+          "total": 388,
+          "pax": 1
+         },
+         {
+          "flightId": "BA5589",
+          "airline": "British Airways",
+          "origin": "JFK",
+          "destination": "LIS",
+          "date": "2027-03-07",
+          "depart": "06:40",
+          "arrive": "15:29",
+          "stops": 1,
+          "pricePerPax": 394,
+          "currency": "USD",
+          "total": 394,
+          "pax": 1
+         }
+        ]
+       }
+      ],
+      "carry": {
+       "pax": 1,
+       "currency": "USD"
+      },
+      "promptVersion": "gen-v3.2"
+     },
+     "screen": {
+      "id": "cheapest-morning:solo:0:t0",
+      "nodeId": "search",
+      "context": {
+       "party": "solo",
+       "pax": "1",
+       "surface": "fullscreen",
+       "currency": "USD",
+       "origin": "JFK"
+      },
+      "variant": "dense-fare-rows",
+      "rationale": "Desktop: dense rows, scan fast.",
+      "messages": [
+       {
+        "version": "v0.9",
+        "createSurface": {
+         "surfaceId": "cheapest-morning-solo-0-t0",
+         "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+        }
+       },
+       {
+        "version": "v0.9",
+        "updateComponents": {
+         "surfaceId": "cheapest-morning-solo-0-t0",
+         "components": [
+          {
+           "id": "root",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "title",
+            "sub",
+            "fare_0",
+            "fare_1",
+            "fare_2",
+            "fare_3",
+            "fare_4",
+            "fare_5"
+           ]
+          },
+          {
+           "id": "title",
+           "component": "Text",
+           "text": "JFK → LIS · March mornings",
+           "variant": "h4"
+          },
+          {
+           "id": "sub",
+           "component": "Text",
+           "text": "1 traveler · USD · cheapest first",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_0",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_0_info",
+            "fare_0_btn"
+           ]
+          },
+          {
+           "id": "fare_0_info",
+           "component": "Column",
+           "children": [
+            "fare_0_flight",
+            "fare_0_meta"
+           ]
+          },
+          {
+           "id": "fare_0_flight",
+           "component": "Text",
+           "text": "**UA2681** $293"
+          },
+          {
+           "id": "fare_0_meta",
+           "component": "Text",
+           "text": "Sun 14 Mar 07:10–15:51 · 1 stop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_0_btn",
+           "component": "Button",
+           "child": "fare_0_btn_t",
+           "variant": "borderless",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "UA2681"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_0_btn_t",
+           "component": "Text",
+           "text": "Pick"
+          },
+          {
+           "id": "fare_1",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_1_info",
+            "fare_1_btn"
+           ]
+          },
+          {
+           "id": "fare_1_info",
+           "component": "Column",
+           "children": [
+            "fare_1_flight",
+            "fare_1_meta"
+           ]
+          },
+          {
+           "id": "fare_1_flight",
+           "component": "Text",
+           "text": "**BA6969** $322"
+          },
+          {
+           "id": "fare_1_meta",
+           "component": "Text",
+           "text": "Sun 14 Mar 06:40–15:34 · 1 stop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_1_btn",
+           "component": "Button",
+           "child": "fare_1_btn_t",
+           "variant": "borderless",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "BA6969"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_1_btn_t",
+           "component": "Text",
+           "text": "Pick"
+          },
+          {
+           "id": "fare_2",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_2_info",
+            "fare_2_btn"
+           ]
+          },
+          {
+           "id": "fare_2_info",
+           "component": "Column",
+           "children": [
+            "fare_2_flight",
+            "fare_2_meta"
+           ]
+          },
+          {
+           "id": "fare_2_flight",
+           "component": "Text",
+           "text": "**IB7362** $366"
+          },
+          {
+           "id": "fare_2_meta",
+           "component": "Text",
+           "text": "Sun 14 Mar 08:25–17:12 · 1 stop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_2_btn",
+           "component": "Button",
+           "child": "fare_2_btn_t",
+           "variant": "borderless",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "IB7362"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_2_btn_t",
+           "component": "Text",
+           "text": "Pick"
+          },
+          {
+           "id": "fare_3",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_3_info",
+            "fare_3_btn"
+           ]
+          },
+          {
+           "id": "fare_3_info",
+           "component": "Column",
+           "children": [
+            "fare_3_flight",
+            "fare_3_meta"
+           ]
+          },
+          {
+           "id": "fare_3_flight",
+           "component": "Text",
+           "text": "**BA5342** $369"
+          },
+          {
+           "id": "fare_3_meta",
+           "component": "Text",
+           "text": "Sun 14 Mar 06:05–14:57 · 1 stop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_3_btn",
+           "component": "Button",
+           "child": "fare_3_btn_t",
+           "variant": "borderless",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "BA5342"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_3_btn_t",
+           "component": "Text",
+           "text": "Pick"
+          },
+          {
+           "id": "fare_4",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_4_info",
+            "fare_4_btn"
+           ]
+          },
+          {
+           "id": "fare_4_info",
+           "component": "Column",
+           "children": [
+            "fare_4_flight",
+            "fare_4_meta"
+           ]
+          },
+          {
+           "id": "fare_4_flight",
+           "component": "Text",
+           "text": "**BA8578** $374"
+          },
+          {
+           "id": "fare_4_meta",
+           "component": "Text",
+           "text": "Sun 21 Mar 06:05–13:08 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_4_btn",
+           "component": "Button",
+           "child": "fare_4_btn_t",
+           "variant": "borderless",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "BA8578"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_4_btn_t",
+           "component": "Text",
+           "text": "Pick"
+          },
+          {
+           "id": "fare_5",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_5_info",
+            "fare_5_btn"
+           ]
+          },
+          {
+           "id": "fare_5_info",
+           "component": "Column",
+           "children": [
+            "fare_5_flight",
+            "fare_5_meta"
+           ]
+          },
+          {
+           "id": "fare_5_flight",
+           "component": "Text",
+           "text": "**UA9181** $384"
+          },
+          {
+           "id": "fare_5_meta",
+           "component": "Text",
+           "text": "Sun 21 Mar 07:10–14:16 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_5_btn",
+           "component": "Button",
+           "child": "fare_5_btn_t",
+           "variant": "borderless",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "UA9181"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_5_btn_t",
+           "component": "Text",
+           "text": "Pick"
+          }
+         ]
+        }
+       }
+      ],
+      "model": "sample",
+      "createdAt": "2026-11-21T12:00:00.000Z",
+      "annotations": []
+     },
+     "userAction": "Picked BA8578 $374 (nonstop)",
+     "checks": [
+      {
+       "kind": "grounding",
+       "ok": true,
+       "message": "All 30 prices, times, flights and dates are in the tool results or carry"
+      },
+      {
+       "kind": "carry",
+       "ok": true,
+       "message": "Nothing chosen yet"
+      },
+      {
+       "kind": "schema",
+       "ok": true,
+       "message": "Screen renders (39 components)"
+      }
+     ],
+     "ms": 2324
+    },
+    {
+     "index": 1,
+     "userMessage": "Book BA8578.",
+     "intent": "select",
+     "ingredients": {
+      "context": {
+       "party": "solo",
+       "pax": "1",
+       "surface": "fullscreen",
+       "currency": "USD",
+       "origin": "JFK"
+      },
+      "history": [
+       "user: Cheapest morning flight to Lisbon in March. Nonstop preferred.",
+       "assistant showed: dense-fare-rows"
+      ],
+      "toolResults": [
+       {
+        "tool": "get_fare",
+        "args": {
+         "flightId": "BA8578"
+        },
+        "fares": [
+         {
+          "flightId": "BA8578",
+          "airline": "British Airways",
+          "origin": "JFK",
+          "destination": "LIS",
+          "date": "2027-03-21",
+          "depart": "06:05",
+          "arrive": "13:08",
+          "stops": 0,
+          "pricePerPax": 374,
+          "currency": "USD",
+          "total": 374,
+          "pax": 1
+         }
+        ]
+       }
+      ],
+      "carry": {
+       "pax": 1,
+       "currency": "USD",
+       "flightId": "BA8578",
+       "total": 374,
+       "date": "2027-03-21",
+       "depart": "06:05"
+      },
+      "promptVersion": "gen-v3.2"
+     },
+     "screen": {
+      "id": "cheapest-morning:solo:0:t1",
+      "nodeId": "select",
+      "context": {
+       "party": "solo",
+       "pax": "1",
+       "surface": "fullscreen",
+       "currency": "USD",
+       "origin": "JFK"
+      },
+      "variant": "fare-summary-desktop",
+      "rationale": "Confirm the chosen fare before paying.",
+      "messages": [
+       {
+        "version": "v0.9",
+        "createSurface": {
+         "surfaceId": "cheapest-morning-solo-0-t1",
+         "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+        }
+       },
+       {
+        "version": "v0.9",
+        "updateComponents": {
+         "surfaceId": "cheapest-morning-solo-0-t1",
+         "components": [
+          {
+           "id": "root",
+           "component": "Card",
+           "child": "col"
+          },
+          {
+           "id": "col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "title",
+            "route",
+            "times",
+            "div",
+            "total",
+            "each",
+            "book"
+           ]
+          },
+          {
+           "id": "title",
+           "component": "Text",
+           "text": "BA8578 · British Airways",
+           "variant": "h4"
+          },
+          {
+           "id": "route",
+           "component": "Text",
+           "text": "JFK → LIS · Sun 21 Mar",
+           "variant": "caption"
+          },
+          {
+           "id": "times",
+           "component": "Text",
+           "text": "06:05 → 13:08 · nonstop"
+          },
+          {
+           "id": "div",
+           "component": "Divider"
+          },
+          {
+           "id": "total",
+           "component": "Text",
+           "text": "**$374** total · 1 traveler"
+          },
+          {
+           "id": "each",
+           "component": "Text",
+           "text": "$374 per person",
+           "variant": "caption"
+          },
+          {
+           "id": "book",
+           "component": "Button",
+           "child": "book_t",
+           "variant": "primary",
+           "action": {
+            "event": {
+             "name": "book",
+             "context": {
+              "flightId": "BA8578"
+             }
+            }
+           }
+          },
+          {
+           "id": "book_t",
+           "component": "Text",
+           "text": "Book $374"
+          }
+         ]
+        }
+       }
+      ],
+      "model": "sample",
+      "createdAt": "2026-11-21T12:00:00.000Z",
+      "annotations": []
+     },
+     "userAction": "Booked BA8578",
+     "checks": [
+      {
+       "kind": "grounding",
+       "ok": true,
+       "message": "All 7 prices, times, flights and dates are in the tool results or carry"
+      },
+      {
+       "kind": "carry",
+       "ok": true,
+       "message": "Chosen BA8578 carried over unchanged"
+      },
+      {
+       "kind": "schema",
+       "ok": true,
+       "message": "Screen renders (10 components)"
+      },
+      {
+       "kind": "goal",
+       "ok": true,
+       "message": "Cheapest morning fare UA2681 $293 was shown and bookable; booked BA8578 as chosen"
+      }
+     ],
+     "ms": 3301
+    }
+   ],
+   "outcome": "booked",
+   "goalMet": true
+  },
+  {
+   "id": "cheapest-morning:budget-couple:0",
+   "queryId": "cheapest-morning",
+   "personaId": "budget-couple",
+   "run": 0,
+   "turns": [
+    {
+     "index": 0,
+     "userMessage": "cheapest morning flight to lisbon in march? there's 2 of us",
+     "intent": "search",
+     "ingredients": {
+      "context": {
+       "party": "couple",
+       "pax": "2",
+       "surface": "inline",
+       "currency": "GBP",
+       "origin": "MAN"
+      },
+      "history": [],
+      "toolResults": [
+       {
+        "tool": "search_fares",
+        "args": {
+         "destination": "LIS",
+         "month": "2027-03",
+         "departAfter": "05:00",
+         "departBefore": "12:00",
+         "sort": "price",
+         "origin": "MAN",
+         "pax": 2,
+         "currency": "GBP"
+        },
+        "fares": [
+         {
+          "flightId": "TP4650",
+          "airline": "TAP Air Portugal",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-07",
+          "depart": "11:15",
+          "arrive": "15:20",
+          "stops": 1,
+          "pricePerPax": 48,
+          "currency": "GBP",
+          "total": 96,
+          "pax": 2
+         },
+         {
+          "flightId": "FR9164",
+          "airline": "Ryanair",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-21",
+          "depart": "07:10",
+          "arrive": "09:54",
+          "stops": 0,
+          "pricePerPax": 48,
+          "currency": "GBP",
+          "total": 96,
+          "pax": 2
+         },
+         {
+          "flightId": "U24408",
+          "airline": "easyJet",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-07",
+          "depart": "06:40",
+          "arrive": "09:18",
+          "stops": 0,
+          "pricePerPax": 50,
+          "currency": "GBP",
+          "total": 100,
+          "pax": 2
+         },
+         {
+          "flightId": "U24688",
+          "airline": "easyJet",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "06:40",
+          "arrive": "09:23",
+          "stops": 0,
+          "pricePerPax": 50,
+          "currency": "GBP",
+          "total": 100,
+          "pax": 2
+         },
+         {
+          "flightId": "FR8211",
+          "airline": "Ryanair",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-07",
+          "depart": "06:05",
+          "arrive": "08:46",
+          "stops": 0,
+          "pricePerPax": 52,
+          "currency": "GBP",
+          "total": 104,
+          "pax": 2
+         },
+         {
+          "flightId": "FR8491",
+          "airline": "Ryanair",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "06:05",
+          "arrive": "08:51",
+          "stops": 0,
+          "pricePerPax": 52,
+          "currency": "GBP",
+          "total": 104,
+          "pax": 2
+         },
+         {
+          "flightId": "FR1544",
+          "airline": "Ryanair",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-07",
+          "depart": "07:10",
+          "arrive": "09:59",
+          "stops": 0,
+          "pricePerPax": 60,
+          "currency": "GBP",
+          "total": 120,
+          "pax": 2
+         },
+         {
+          "flightId": "FR8944",
+          "airline": "Ryanair",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "07:10",
+          "arrive": "09:59",
+          "stops": 0,
+          "pricePerPax": 60,
+          "currency": "GBP",
+          "total": 120,
+          "pax": 2
+         }
+        ]
+       }
+      ],
+      "carry": {
+       "pax": 2,
+       "currency": "GBP"
+      },
+      "promptVersion": "gen-v3.2"
+     },
+     "screen": {
+      "id": "cheapest-morning:budget-couple:0:t0",
+      "nodeId": "search",
+      "context": {
+       "party": "couple",
+       "pax": "2",
+       "surface": "inline",
+       "currency": "GBP",
+       "origin": "MAN"
+      },
+      "variant": "stacked-fare-cards",
+      "rationale": "Phone surface: one fare per card, big tap targets.",
+      "messages": [
+       {
+        "version": "v0.9",
+        "createSurface": {
+         "surfaceId": "cheapest-morning-budget-couple-0-t0",
+         "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+        }
+       },
+       {
+        "version": "v0.9",
+        "updateComponents": {
+         "surfaceId": "cheapest-morning-budget-couple-0-t0",
+         "components": [
+          {
+           "id": "root",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "title",
+            "sub",
+            "fare_0",
+            "fare_1",
+            "fare_2"
+           ]
+          },
+          {
+           "id": "title",
+           "component": "Text",
+           "text": "Cheapest mornings to Lisbon",
+           "variant": "h4"
+          },
+          {
+           "id": "sub",
+           "component": "Text",
+           "text": "2 travelers · from MAN · GBP",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_0",
+           "component": "Card",
+           "child": "fare_0_col"
+          },
+          {
+           "id": "fare_0_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "fare_0_top",
+            "fare_0_meta",
+            "fare_0_btn"
+           ]
+          },
+          {
+           "id": "fare_0_top",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_0_flight",
+            "fare_0_total"
+           ]
+          },
+          {
+           "id": "fare_0_flight",
+           "component": "Text",
+           "text": "**TP4650** · TAP Air Portugal"
+          },
+          {
+           "id": "fare_0_total",
+           "component": "Text",
+           "text": "**£96**"
+          },
+          {
+           "id": "fare_0_meta",
+           "component": "Text",
+           "text": "Sun 7 Mar · 11:15 → 15:20 · 1 stop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_0_btn",
+           "component": "Button",
+           "child": "fare_0_btn_t",
+           "variant": "default",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "TP4650"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_0_btn_t",
+           "component": "Text",
+           "text": "Select"
+          },
+          {
+           "id": "fare_1",
+           "component": "Card",
+           "child": "fare_1_col"
+          },
+          {
+           "id": "fare_1_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "fare_1_top",
+            "fare_1_meta",
+            "fare_1_btn"
+           ]
+          },
+          {
+           "id": "fare_1_top",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_1_flight",
+            "fare_1_total"
+           ]
+          },
+          {
+           "id": "fare_1_flight",
+           "component": "Text",
+           "text": "**FR9164** · Ryanair"
+          },
+          {
+           "id": "fare_1_total",
+           "component": "Text",
+           "text": "**£96**"
+          },
+          {
+           "id": "fare_1_meta",
+           "component": "Text",
+           "text": "Sun 21 Mar · 07:10 → 09:54 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_1_btn",
+           "component": "Button",
+           "child": "fare_1_btn_t",
+           "variant": "default",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "FR9164"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_1_btn_t",
+           "component": "Text",
+           "text": "Select"
+          },
+          {
+           "id": "fare_2",
+           "component": "Card",
+           "child": "fare_2_col"
+          },
+          {
+           "id": "fare_2_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "fare_2_top",
+            "fare_2_meta",
+            "fare_2_btn"
+           ]
+          },
+          {
+           "id": "fare_2_top",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_2_flight",
+            "fare_2_total"
+           ]
+          },
+          {
+           "id": "fare_2_flight",
+           "component": "Text",
+           "text": "**U24408** · easyJet"
+          },
+          {
+           "id": "fare_2_total",
+           "component": "Text",
+           "text": "**£100**"
+          },
+          {
+           "id": "fare_2_meta",
+           "component": "Text",
+           "text": "Sun 7 Mar · 06:40 → 09:18 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_2_btn",
+           "component": "Button",
+           "child": "fare_2_btn_t",
+           "variant": "default",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "U24408"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_2_btn_t",
+           "component": "Text",
+           "text": "Select"
+          }
+         ]
+        }
+       }
+      ],
+      "model": "sample",
+      "createdAt": "2026-11-21T12:00:00.000Z",
+      "annotations": []
+     },
+     "userAction": "asked: any nonstop for that price?",
+     "checks": [
+      {
+       "kind": "grounding",
+       "ok": true,
+       "message": "All 15 prices, times, flights and dates are in the tool results or carry"
+      },
+      {
+       "kind": "carry",
+       "ok": true,
+       "message": "Nothing chosen yet"
+      },
+      {
+       "kind": "schema",
+       "ok": true,
+       "message": "Screen renders (27 components)"
+      }
+     ],
+     "ms": 3503
+    },
+    {
+     "index": 1,
+     "userMessage": "any nonstop for that price?",
+     "intent": "refine",
+     "ingredients": {
+      "context": {
+       "party": "couple",
+       "pax": "2",
+       "surface": "inline",
+       "currency": "GBP",
+       "origin": "MAN"
+      },
+      "history": [
+       "user: cheapest morning flight to lisbon in march? there's 2 of us",
+       "assistant showed: stacked-fare-cards"
+      ],
+      "toolResults": [
+       {
+        "tool": "search_fares",
+        "args": {
+         "destination": "LIS",
+         "month": "2027-03",
+         "departAfter": "05:00",
+         "departBefore": "12:00",
+         "sort": "price",
+         "maxStops": 0,
+         "origin": "MAN",
+         "pax": 2,
+         "currency": "GBP"
+        },
+        "fares": [
+         {
+          "flightId": "FR9164",
+          "airline": "Ryanair",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-21",
+          "depart": "07:10",
+          "arrive": "09:54",
+          "stops": 0,
+          "pricePerPax": 48,
+          "currency": "GBP",
+          "total": 96,
+          "pax": 2
+         },
+         {
+          "flightId": "U24408",
+          "airline": "easyJet",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-07",
+          "depart": "06:40",
+          "arrive": "09:18",
+          "stops": 0,
+          "pricePerPax": 50,
+          "currency": "GBP",
+          "total": 100,
+          "pax": 2
+         },
+         {
+          "flightId": "U24688",
+          "airline": "easyJet",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "06:40",
+          "arrive": "09:23",
+          "stops": 0,
+          "pricePerPax": 50,
+          "currency": "GBP",
+          "total": 100,
+          "pax": 2
+         },
+         {
+          "flightId": "FR8211",
+          "airline": "Ryanair",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-07",
+          "depart": "06:05",
+          "arrive": "08:46",
+          "stops": 0,
+          "pricePerPax": 52,
+          "currency": "GBP",
+          "total": 104,
+          "pax": 2
+         },
+         {
+          "flightId": "FR8491",
+          "airline": "Ryanair",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "06:05",
+          "arrive": "08:51",
+          "stops": 0,
+          "pricePerPax": 52,
+          "currency": "GBP",
+          "total": 104,
+          "pax": 2
+         },
+         {
+          "flightId": "FR1544",
+          "airline": "Ryanair",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-07",
+          "depart": "07:10",
+          "arrive": "09:59",
+          "stops": 0,
+          "pricePerPax": 60,
+          "currency": "GBP",
+          "total": 120,
+          "pax": 2
+         },
+         {
+          "flightId": "FR8944",
+          "airline": "Ryanair",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "07:10",
+          "arrive": "09:59",
+          "stops": 0,
+          "pricePerPax": 60,
+          "currency": "GBP",
+          "total": 120,
+          "pax": 2
+         },
+         {
+          "flightId": "TP7447",
+          "airline": "TAP Air Portugal",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "08:25",
+          "arrive": "11:17",
+          "stops": 0,
+          "pricePerPax": 61,
+          "currency": "GBP",
+          "total": 122,
+          "pax": 2
+         }
+        ]
+       }
+      ],
+      "carry": {
+       "pax": 2,
+       "currency": "GBP"
+      },
+      "promptVersion": "gen-v3.2"
+     },
+     "screen": {
+      "id": "cheapest-morning:budget-couple:0:t1",
+      "nodeId": "refine",
+      "context": {
+       "party": "couple",
+       "pax": "2",
+       "surface": "inline",
+       "currency": "GBP",
+       "origin": "MAN"
+      },
+      "variant": "stacked-fare-cards",
+      "rationale": "Phone surface: one fare per card, big tap targets.",
+      "messages": [
+       {
+        "version": "v0.9",
+        "createSurface": {
+         "surfaceId": "cheapest-morning-budget-couple-0-t1",
+         "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+        }
+       },
+       {
+        "version": "v0.9",
+        "updateComponents": {
+         "surfaceId": "cheapest-morning-budget-couple-0-t1",
+         "components": [
+          {
+           "id": "root",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "title",
+            "sub",
+            "fare_0",
+            "fare_1",
+            "fare_2"
+           ]
+          },
+          {
+           "id": "title",
+           "component": "Text",
+           "text": "Nonstop only",
+           "variant": "h4"
+          },
+          {
+           "id": "sub",
+           "component": "Text",
+           "text": "Same price, no stops",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_0",
+           "component": "Card",
+           "child": "fare_0_col"
+          },
+          {
+           "id": "fare_0_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "fare_0_top",
+            "fare_0_meta",
+            "fare_0_btn"
+           ]
+          },
+          {
+           "id": "fare_0_top",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_0_flight",
+            "fare_0_total"
+           ]
+          },
+          {
+           "id": "fare_0_flight",
+           "component": "Text",
+           "text": "**FR9164** · Ryanair"
+          },
+          {
+           "id": "fare_0_total",
+           "component": "Text",
+           "text": "**£96**"
+          },
+          {
+           "id": "fare_0_meta",
+           "component": "Text",
+           "text": "Sun 21 Mar · 07:10 → 09:54 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_0_btn",
+           "component": "Button",
+           "child": "fare_0_btn_t",
+           "variant": "default",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "FR9164"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_0_btn_t",
+           "component": "Text",
+           "text": "Select"
+          },
+          {
+           "id": "fare_1",
+           "component": "Card",
+           "child": "fare_1_col"
+          },
+          {
+           "id": "fare_1_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "fare_1_top",
+            "fare_1_meta",
+            "fare_1_btn"
+           ]
+          },
+          {
+           "id": "fare_1_top",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_1_flight",
+            "fare_1_total"
+           ]
+          },
+          {
+           "id": "fare_1_flight",
+           "component": "Text",
+           "text": "**U24408** · easyJet"
+          },
+          {
+           "id": "fare_1_total",
+           "component": "Text",
+           "text": "**£100**"
+          },
+          {
+           "id": "fare_1_meta",
+           "component": "Text",
+           "text": "Sun 7 Mar · 06:40 → 09:18 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_1_btn",
+           "component": "Button",
+           "child": "fare_1_btn_t",
+           "variant": "default",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "U24408"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_1_btn_t",
+           "component": "Text",
+           "text": "Select"
+          },
+          {
+           "id": "fare_2",
+           "component": "Card",
+           "child": "fare_2_col"
+          },
+          {
+           "id": "fare_2_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "fare_2_top",
+            "fare_2_meta",
+            "fare_2_btn"
+           ]
+          },
+          {
+           "id": "fare_2_top",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_2_flight",
+            "fare_2_total"
+           ]
+          },
+          {
+           "id": "fare_2_flight",
+           "component": "Text",
+           "text": "**U24688** · easyJet"
+          },
+          {
+           "id": "fare_2_total",
+           "component": "Text",
+           "text": "**£100**"
+          },
+          {
+           "id": "fare_2_meta",
+           "component": "Text",
+           "text": "Sun 14 Mar · 06:40 → 09:23 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_2_btn",
+           "component": "Button",
+           "child": "fare_2_btn_t",
+           "variant": "default",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "U24688"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_2_btn_t",
+           "component": "Text",
+           "text": "Select"
+          }
+         ]
+        }
+       }
+      ],
+      "model": "sample",
+      "createdAt": "2026-11-21T12:00:00.000Z",
+      "annotations": []
+     },
+     "userAction": "Tapped FR9164 £96",
+     "checks": [
+      {
+       "kind": "grounding",
+       "ok": true,
+       "message": "All 15 prices, times, flights and dates are in the tool results or carry"
+      },
+      {
+       "kind": "carry",
+       "ok": true,
+       "message": "Nothing chosen yet"
+      },
+      {
+       "kind": "schema",
+       "ok": true,
+       "message": "Screen renders (27 components)"
+      }
+     ],
+     "ms": 2080
+    },
+    {
+     "index": 2,
+     "userMessage": "ok FR9164",
+     "intent": "extras",
+     "ingredients": {
+      "context": {
+       "party": "couple",
+       "pax": "2",
+       "surface": "inline",
+       "currency": "GBP",
+       "origin": "MAN"
+      },
+      "history": [
+       "user: cheapest morning flight to lisbon in march? there's 2 of us",
+       "assistant showed: stacked-fare-cards",
+       "user: any nonstop for that price?",
+       "assistant showed: stacked-fare-cards"
+      ],
+      "toolResults": [
+       {
+        "tool": "get_fare",
+        "args": {
+         "flightId": "FR9164"
+        },
+        "fares": [
+         {
+          "flightId": "FR9164",
+          "airline": "Ryanair",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-21",
+          "depart": "07:10",
+          "arrive": "09:54",
+          "stops": 0,
+          "pricePerPax": 48,
+          "currency": "GBP",
+          "total": 96,
+          "pax": 2
+         }
+        ]
+       }
+      ],
+      "carry": {
+       "pax": 2,
+       "currency": "GBP",
+       "flightId": "FR9164",
+       "total": 96,
+       "date": "2027-03-21",
+       "depart": "07:10"
+      },
+      "promptVersion": "gen-v3.2"
+     },
+     "screen": {
+      "id": "cheapest-morning:budget-couple:0:t2",
+      "nodeId": "extras",
+      "context": {
+       "party": "couple",
+       "pax": "2",
+       "surface": "inline",
+       "currency": "GBP",
+       "origin": "MAN"
+      },
+      "variant": "bags-upsell-sheet",
+      "rationale": "Budget travelers see extras before paying.",
+      "messages": [
+       {
+        "version": "v0.9",
+        "createSurface": {
+         "surfaceId": "cheapest-morning-budget-couple-0-t2",
+         "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+        }
+       },
+       {
+        "version": "v0.9",
+        "updateComponents": {
+         "surfaceId": "cheapest-morning-budget-couple-0-t2",
+         "components": [
+          {
+           "id": "root",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "title",
+            "fare",
+            "bags",
+            "seat",
+            "cont"
+           ]
+          },
+          {
+           "id": "title",
+           "component": "Text",
+           "text": "Add bags?",
+           "variant": "h4"
+          },
+          {
+           "id": "fare",
+           "component": "Text",
+           "text": "FR9164 · £96 so far",
+           "variant": "caption"
+          },
+          {
+           "id": "bags",
+           "component": "CheckBox",
+           "label": "Cabin bag for each traveler",
+           "value": true
+          },
+          {
+           "id": "seat",
+           "component": "CheckBox",
+           "label": "Sit together",
+           "value": false
+          },
+          {
+           "id": "cont",
+           "component": "Button",
+           "child": "cont_t",
+           "variant": "primary",
+           "action": {
+            "event": {
+             "name": "continue",
+             "context": {
+              "flightId": "FR9164"
+             }
+            }
+           }
+          },
+          {
+           "id": "cont_t",
+           "component": "Text",
+           "text": "Continue to payment"
+          }
+         ]
+        }
+       }
+      ],
+      "model": "sample",
+      "createdAt": "2026-11-21T12:00:00.000Z",
+      "annotations": []
+     },
+     "userAction": "Left: bag fees",
+     "checks": [
+      {
+       "kind": "grounding",
+       "ok": true,
+       "message": "All 2 prices, times, flights and dates are in the tool results or carry"
+      },
+      {
+       "kind": "carry",
+       "ok": true,
+       "message": "Chosen FR9164 carried over unchanged"
+      },
+      {
+       "kind": "schema",
+       "ok": true,
+       "message": "Screen renders (7 components)"
+      },
+      {
+       "kind": "goal",
+       "ok": true,
+       "message": "Best fare TP4650 (96 GBP) was shown"
+      }
+     ],
+     "ms": 3057
+    }
+   ],
+   "outcome": "abandoned",
+   "goalMet": true
+  },
+  {
+   "id": "nonstop-14th:family:0",
+   "queryId": "nonstop-14th",
+   "personaId": "family",
+   "run": 0,
+   "turns": [
+    {
+     "index": 0,
+     "userMessage": "nonstop to lisbon on 14 march, need to land before lunch",
+     "intent": "search",
+     "ingredients": {
+      "context": {
+       "party": "family",
+       "pax": "4",
+       "surface": "inline",
+       "currency": "EUR",
+       "origin": "LHR"
+      },
+      "history": [],
+      "toolResults": [
+       {
+        "tool": "search_fares",
+        "args": {
+         "destination": "LIS",
+         "date": "2027-03-14",
+         "maxStops": 0,
+         "departBefore": "10:00",
+         "sort": "depart",
+         "origin": "LHR",
+         "pax": 4,
+         "currency": "EUR"
+        },
+        "fares": [
+         {
+          "flightId": "IB6737",
+          "airline": "Iberia",
+          "origin": "LHR",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "06:05",
+          "arrive": "08:47",
+          "stops": 0,
+          "pricePerPax": 77,
+          "currency": "EUR",
+          "total": 308,
+          "pax": 4
+         },
+         {
+          "flightId": "FR1094",
+          "airline": "Ryanair",
+          "origin": "LHR",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "07:10",
+          "arrive": "09:59",
+          "stops": 0,
+          "pricePerPax": 75,
+          "currency": "EUR",
+          "total": 300,
+          "pax": 4
+         },
+         {
+          "flightId": "TP7877",
+          "airline": "TAP Air Portugal",
+          "origin": "LHR",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "08:25",
+          "arrive": "10:57",
+          "stops": 0,
+          "pricePerPax": 112,
+          "currency": "EUR",
+          "total": 448,
+          "pax": 4
+         },
+         {
+          "flightId": "IB9908",
+          "airline": "Iberia",
+          "origin": "LHR",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "09:50",
+          "arrive": "12:28",
+          "stops": 0,
+          "pricePerPax": 104,
+          "currency": "EUR",
+          "total": 416,
+          "pax": 4
+         }
+        ]
+       }
+      ],
+      "carry": {
+       "pax": 4,
+       "currency": "EUR"
+      },
+      "promptVersion": "gen-v3.2",
+      "pinned": {
+       "key": "search|family",
+       "fromScreenId": "nonstop-14th:family:0:t0"
+      }
+     },
+     "screen": {
+      "id": "nonstop-14th:family:0:t0",
+      "nodeId": "search",
+      "context": {
+       "party": "family",
+       "pax": "4",
+       "surface": "inline",
+       "currency": "EUR",
+       "origin": "LHR"
+      },
+      "variant": "stacked-fare-cards",
+      "rationale": "Phone surface: one fare per card, big tap targets.",
+      "messages": [
+       {
+        "version": "v0.9",
+        "createSurface": {
+         "surfaceId": "nonstop-14th-family-0-t0",
+         "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+        }
+       },
+       {
+        "version": "v0.9",
+        "updateComponents": {
+         "surfaceId": "nonstop-14th-family-0-t0",
+         "components": [
+          {
+           "id": "root",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "title",
+            "sub",
+            "fare_0",
+            "fare_1",
+            "fare_2"
+           ]
+          },
+          {
+           "id": "title",
+           "component": "Text",
+           "text": "Nonstop · Sun 14 Mar",
+           "variant": "h4"
+          },
+          {
+           "id": "sub",
+           "component": "Text",
+           "text": "4 travelers · earliest first",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_0",
+           "component": "Card",
+           "child": "fare_0_col"
+          },
+          {
+           "id": "fare_0_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "fare_0_top",
+            "fare_0_meta",
+            "fare_0_btn"
+           ]
+          },
+          {
+           "id": "fare_0_top",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_0_flight",
+            "fare_0_total"
+           ]
+          },
+          {
+           "id": "fare_0_flight",
+           "component": "Text",
+           "text": "**IB6737** · Iberia"
+          },
+          {
+           "id": "fare_0_total",
+           "component": "Text",
+           "text": "**€308**"
+          },
+          {
+           "id": "fare_0_meta",
+           "component": "Text",
+           "text": "Sun 14 Mar · 06:05 → 08:47 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_0_btn",
+           "component": "Button",
+           "child": "fare_0_btn_t",
+           "variant": "default",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "IB6737"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_0_btn_t",
+           "component": "Text",
+           "text": "Select"
+          },
+          {
+           "id": "fare_1",
+           "component": "Card",
+           "child": "fare_1_col"
+          },
+          {
+           "id": "fare_1_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "fare_1_top",
+            "fare_1_meta",
+            "fare_1_btn"
+           ]
+          },
+          {
+           "id": "fare_1_top",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_1_flight",
+            "fare_1_total"
+           ]
+          },
+          {
+           "id": "fare_1_flight",
+           "component": "Text",
+           "text": "**FR1094** · Ryanair"
+          },
+          {
+           "id": "fare_1_total",
+           "component": "Text",
+           "text": "**€300**"
+          },
+          {
+           "id": "fare_1_meta",
+           "component": "Text",
+           "text": "Sun 14 Mar · 07:10 → 09:59 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_1_btn",
+           "component": "Button",
+           "child": "fare_1_btn_t",
+           "variant": "default",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "FR1094"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_1_btn_t",
+           "component": "Text",
+           "text": "Select"
+          },
+          {
+           "id": "fare_2",
+           "component": "Card",
+           "child": "fare_2_col"
+          },
+          {
+           "id": "fare_2_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "fare_2_top",
+            "fare_2_meta",
+            "fare_2_btn"
+           ]
+          },
+          {
+           "id": "fare_2_top",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_2_flight",
+            "fare_2_total"
+           ]
+          },
+          {
+           "id": "fare_2_flight",
+           "component": "Text",
+           "text": "**TP7877** · TAP Air Portugal"
+          },
+          {
+           "id": "fare_2_total",
+           "component": "Text",
+           "text": "**€448**"
+          },
+          {
+           "id": "fare_2_meta",
+           "component": "Text",
+           "text": "Sun 14 Mar · 08:25 → 10:57 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_2_btn",
+           "component": "Button",
+           "child": "fare_2_btn_t",
+           "variant": "default",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "TP7877"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_2_btn_t",
+           "component": "Text",
+           "text": "Select"
+          }
+         ]
+        }
+       }
+      ],
+      "model": "sample",
+      "createdAt": "2026-11-21T12:00:00.000Z",
+      "annotations": []
+     },
+     "userAction": "Tapped FR1094 €300",
+     "checks": [
+      {
+       "kind": "grounding",
+       "ok": true,
+       "message": "All 16 prices, times, flights and dates are in the tool results or carry"
+      },
+      {
+       "kind": "carry",
+       "ok": true,
+       "message": "Nothing chosen yet"
+      },
+      {
+       "kind": "schema",
+       "ok": true,
+       "message": "Screen renders (27 components)"
+      }
+     ],
+     "ms": 2586
+    },
+    {
+     "index": 1,
+     "userMessage": "FR1094",
+     "intent": "select",
+     "ingredients": {
+      "context": {
+       "party": "family",
+       "pax": "4",
+       "surface": "inline",
+       "currency": "EUR",
+       "origin": "LHR"
+      },
+      "history": [
+       "user: nonstop to lisbon on 14 march, need to land before lunch",
+       "assistant showed: stacked-fare-cards"
+      ],
+      "toolResults": [
+       {
+        "tool": "get_fare",
+        "args": {
+         "flightId": "FR1094"
+        },
+        "fares": [
+         {
+          "flightId": "FR1094",
+          "airline": "Ryanair",
+          "origin": "LHR",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "07:10",
+          "arrive": "09:59",
+          "stops": 0,
+          "pricePerPax": 75,
+          "currency": "EUR",
+          "total": 300,
+          "pax": 4
+         }
+        ]
+       }
+      ],
+      "carry": {
+       "pax": 4,
+       "currency": "EUR",
+       "flightId": "FR1094",
+       "total": 300,
+       "date": "2027-03-14",
+       "depart": "07:10"
+      },
+      "promptVersion": "gen-v3.2",
+      "pinned": {
+       "key": "select|family",
+       "fromScreenId": "cheapest-morning:family:0:t1"
+      }
+     },
+     "screen": {
+      "id": "nonstop-14th:family:0:t1",
+      "nodeId": "select",
+      "context": {
+       "party": "family",
+       "pax": "4",
+       "surface": "inline",
+       "currency": "EUR",
+       "origin": "LHR"
+      },
+      "variant": "fare-summary-card",
+      "rationale": "Confirm the chosen fare before paying.",
+      "messages": [
+       {
+        "version": "v0.9",
+        "createSurface": {
+         "surfaceId": "nonstop-14th-family-0-t1",
+         "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+        }
+       },
+       {
+        "version": "v0.9",
+        "updateComponents": {
+         "surfaceId": "nonstop-14th-family-0-t1",
+         "components": [
+          {
+           "id": "root",
+           "component": "Card",
+           "child": "col"
+          },
+          {
+           "id": "col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "title",
+            "route",
+            "times",
+            "div",
+            "total",
+            "each",
+            "book"
+           ]
+          },
+          {
+           "id": "title",
+           "component": "Text",
+           "text": "FR1094 · Ryanair",
+           "variant": "h4"
+          },
+          {
+           "id": "route",
+           "component": "Text",
+           "text": "LHR → LIS · Sun 14 Mar",
+           "variant": "caption"
+          },
+          {
+           "id": "times",
+           "component": "Text",
+           "text": "07:10 → 09:59 · nonstop"
+          },
+          {
+           "id": "div",
+           "component": "Divider"
+          },
+          {
+           "id": "total",
+           "component": "Text",
+           "text": "**€300** total · 4 travelers"
+          },
+          {
+           "id": "each",
+           "component": "Text",
+           "text": "€75 per person",
+           "variant": "caption"
+          },
+          {
+           "id": "book",
+           "component": "Button",
+           "child": "book_t",
+           "variant": "primary",
+           "action": {
+            "event": {
+             "name": "book",
+             "context": {
+              "flightId": "FR1094"
+             }
+            }
+           }
+          },
+          {
+           "id": "book_t",
+           "component": "Text",
+           "text": "Book €300"
+          }
+         ]
+        }
+       }
+      ],
+      "model": "sample",
+      "createdAt": "2026-11-21T12:00:00.000Z",
+      "annotations": []
+     },
+     "userAction": "Booked FR1094",
+     "checks": [
+      {
+       "kind": "grounding",
+       "ok": true,
+       "message": "All 7 prices, times, flights and dates are in the tool results or carry"
+      },
+      {
+       "kind": "carry",
+       "ok": true,
+       "message": "Chosen FR1094 carried over unchanged"
+      },
+      {
+       "kind": "schema",
+       "ok": true,
+       "message": "Screen renders (10 components)"
+      },
+      {
+       "kind": "goal",
+       "ok": true,
+       "message": "Cheapest qualifying nonstop FR1094 €300 was shown and booked"
+      }
+     ],
+     "ms": 3563
+    }
+   ],
+   "outcome": "booked",
+   "goalMet": true
+  },
+  {
+   "id": "nonstop-14th:solo:0",
+   "queryId": "nonstop-14th",
+   "personaId": "solo",
+   "run": 0,
+   "turns": [
+    {
+     "index": 0,
+     "userMessage": "Nonstop JFK to Lisbon March 14, arriving before lunch.",
+     "intent": "search",
+     "ingredients": {
+      "context": {
+       "party": "solo",
+       "pax": "1",
+       "surface": "fullscreen",
+       "currency": "USD",
+       "origin": "JFK"
+      },
+      "history": [],
+      "toolResults": [
+       {
+        "tool": "search_fares",
+        "args": {
+         "destination": "LIS",
+         "date": "2027-03-14",
+         "maxStops": 0,
+         "departBefore": "10:00",
+         "sort": "depart",
+         "origin": "JFK",
+         "pax": 1,
+         "currency": "USD"
+        },
+        "fares": [
+         {
+          "flightId": "UA7579",
+          "airline": "United",
+          "origin": "JFK",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "09:50",
+          "arrive": "16:54",
+          "stops": 0,
+          "pricePerPax": 460,
+          "currency": "USD",
+          "total": 460,
+          "pax": 1
+         }
+        ]
+       }
+      ],
+      "carry": {
+       "pax": 1,
+       "currency": "USD"
+      },
+      "promptVersion": "gen-v3.2"
+     },
+     "screen": {
+      "id": "nonstop-14th:solo:0:t0",
+      "nodeId": "search",
+      "context": {
+       "party": "solo",
+       "pax": "1",
+       "surface": "fullscreen",
+       "currency": "USD",
+       "origin": "JFK"
+      },
+      "variant": "dense-fare-rows",
+      "rationale": "Desktop: dense rows, scan fast.",
+      "messages": [
+       {
+        "version": "v0.9",
+        "createSurface": {
+         "surfaceId": "nonstop-14th-solo-0-t0",
+         "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+        }
+       },
+       {
+        "version": "v0.9",
+        "updateComponents": {
+         "surfaceId": "nonstop-14th-solo-0-t0",
+         "components": [
+          {
+           "id": "root",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "title",
+            "sub",
+            "fare_0"
+           ]
+          },
+          {
+           "id": "title",
+           "component": "Text",
+           "text": "Nonstop · Sun 14 Mar",
+           "variant": "h4"
+          },
+          {
+           "id": "sub",
+           "component": "Text",
+           "text": "1 option departs before 10:00",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_0",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_0_info",
+            "fare_0_btn"
+           ]
+          },
+          {
+           "id": "fare_0_info",
+           "component": "Column",
+           "children": [
+            "fare_0_flight",
+            "fare_0_meta"
+           ]
+          },
+          {
+           "id": "fare_0_flight",
+           "component": "Text",
+           "text": "**UA7579** $460"
+          },
+          {
+           "id": "fare_0_meta",
+           "component": "Text",
+           "text": "Sun 14 Mar 09:50–16:54 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_0_btn",
+           "component": "Button",
+           "child": "fare_0_btn_t",
+           "variant": "borderless",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "UA7579"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_0_btn_t",
+           "component": "Text",
+           "text": "Pick"
+          }
+         ]
+        }
+       }
+      ],
+      "model": "sample",
+      "createdAt": "2026-11-21T12:00:00.000Z",
+      "annotations": []
+     },
+     "userAction": "asked: anything that lands earlier?",
+     "checks": [
+      {
+       "kind": "grounding",
+       "ok": true,
+       "message": "All 7 prices, times, flights and dates are in the tool results or carry"
+      },
+      {
+       "kind": "carry",
+       "ok": true,
+       "message": "Nothing chosen yet"
+      },
+      {
+       "kind": "schema",
+       "ok": true,
+       "message": "Screen renders (9 components)"
+      }
+     ],
+     "ms": 2324
+    },
+    {
+     "index": 1,
+     "userMessage": "Anything that lands earlier?",
+     "intent": "question",
+     "ingredients": {
+      "context": {
+       "party": "solo",
+       "pax": "1",
+       "surface": "fullscreen",
+       "currency": "USD",
+       "origin": "JFK"
+      },
+      "history": [
+       "user: Nonstop JFK to Lisbon March 14, arriving before lunch.",
+       "assistant showed: dense-fare-rows"
+      ],
+      "toolResults": [
+       {
+        "tool": "search_fares",
+        "args": {
+         "destination": "LIS",
+         "date": "2027-03-14",
+         "maxStops": 0,
+         "departBefore": "10:00",
+         "sort": "depart",
+         "origin": "JFK",
+         "pax": 1,
+         "currency": "USD"
+        },
+        "fares": [
+         {
+          "flightId": "UA7579",
+          "airline": "United",
+          "origin": "JFK",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "09:50",
+          "arrive": "16:54",
+          "stops": 0,
+          "pricePerPax": 460,
+          "currency": "USD",
+          "total": 460,
+          "pax": 1
+         }
+        ]
+       }
+      ],
+      "carry": {
+       "pax": 1,
+       "currency": "USD"
+      },
+      "promptVersion": "gen-v3.2"
+     },
+     "screen": {
+      "id": "nonstop-14th:solo:0:t1",
+      "nodeId": "question",
+      "context": {
+       "party": "solo",
+       "pax": "1",
+       "surface": "fullscreen",
+       "currency": "USD",
+       "origin": "JFK"
+      },
+      "variant": "answer-with-fallback",
+      "rationale": "Answer the question, keep the only option in reach.",
+      "messages": [
+       {
+        "version": "v0.9",
+        "createSurface": {
+         "surfaceId": "nonstop-14th-solo-0-t1",
+         "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+        }
+       },
+       {
+        "version": "v0.9",
+        "updateComponents": {
+         "surfaceId": "nonstop-14th-solo-0-t1",
+         "components": [
+          {
+           "id": "root",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "ans",
+            "fare_0"
+           ]
+          },
+          {
+           "id": "ans",
+           "component": "Text",
+           "text": "No. UA7579 is the only nonstop that morning; it lands 16:54 local."
+          },
+          {
+           "id": "fare_0",
+           "component": "Card",
+           "child": "fare_0_col"
+          },
+          {
+           "id": "fare_0_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "fare_0_top",
+            "fare_0_meta",
+            "fare_0_btn"
+           ]
+          },
+          {
+           "id": "fare_0_top",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_0_flight",
+            "fare_0_total"
+           ]
+          },
+          {
+           "id": "fare_0_flight",
+           "component": "Text",
+           "text": "**UA7579** · United"
+          },
+          {
+           "id": "fare_0_total",
+           "component": "Text",
+           "text": "**$460**"
+          },
+          {
+           "id": "fare_0_meta",
+           "component": "Text",
+           "text": "Sun 14 Mar · 09:50 → 16:54 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_0_btn",
+           "component": "Button",
+           "child": "fare_0_btn_t",
+           "variant": "default",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "UA7579"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_0_btn_t",
+           "component": "Text",
+           "text": "Select"
+          }
+         ]
+        }
+       }
+      ],
+      "model": "sample",
+      "createdAt": "2026-11-21T12:00:00.000Z",
+      "annotations": []
+     },
+     "userAction": "Left without booking",
+     "checks": [
+      {
+       "kind": "grounding",
+       "ok": true,
+       "message": "All 7 prices, times, flights and dates are in the tool results or carry"
+      },
+      {
+       "kind": "carry",
+       "ok": true,
+       "message": "Nothing chosen yet"
+      },
+      {
+       "kind": "schema",
+       "ok": true,
+       "message": "Screen renders (10 components)"
+      },
+      {
+       "kind": "goal",
+       "ok": true,
+       "message": "Only qualifying nonstop UA7579 $460 was shown and bookable"
+      }
+     ],
+     "ms": 3301
+    }
+   ],
+   "outcome": "abandoned",
+   "goalMet": true
+  },
+  {
+   "id": "nonstop-14th:budget-couple:0",
+   "queryId": "nonstop-14th",
+   "personaId": "budget-couple",
+   "run": 0,
+   "turns": [
+    {
+     "index": 0,
+     "userMessage": "nonstop lisbon 14 march morning pls, cheap",
+     "intent": "search",
+     "ingredients": {
+      "context": {
+       "party": "couple",
+       "pax": "2",
+       "surface": "inline",
+       "currency": "GBP",
+       "origin": "MAN"
+      },
+      "history": [],
+      "toolResults": [
+       {
+        "tool": "search_fares",
+        "args": {
+         "destination": "LIS",
+         "date": "2027-03-14",
+         "maxStops": 0,
+         "departBefore": "10:00",
+         "sort": "depart",
+         "origin": "MAN",
+         "pax": 2,
+         "currency": "GBP"
+        },
+        "fares": [
+         {
+          "flightId": "FR8491",
+          "airline": "Ryanair",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "06:05",
+          "arrive": "08:51",
+          "stops": 0,
+          "pricePerPax": 52,
+          "currency": "GBP",
+          "total": 104,
+          "pax": 2
+         },
+         {
+          "flightId": "U24688",
+          "airline": "easyJet",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "06:40",
+          "arrive": "09:23",
+          "stops": 0,
+          "pricePerPax": 50,
+          "currency": "GBP",
+          "total": 100,
+          "pax": 2
+         },
+         {
+          "flightId": "FR8944",
+          "airline": "Ryanair",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "07:10",
+          "arrive": "09:59",
+          "stops": 0,
+          "pricePerPax": 60,
+          "currency": "GBP",
+          "total": 120,
+          "pax": 2
+         },
+         {
+          "flightId": "TP7447",
+          "airline": "TAP Air Portugal",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "08:25",
+          "arrive": "11:17",
+          "stops": 0,
+          "pricePerPax": 61,
+          "currency": "GBP",
+          "total": 122,
+          "pax": 2
+         },
+         {
+          "flightId": "IB9178",
+          "airline": "Iberia",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "09:50",
+          "arrive": "12:23",
+          "stops": 0,
+          "pricePerPax": 68,
+          "currency": "GBP",
+          "total": 136,
+          "pax": 2
+         }
+        ]
+       }
+      ],
+      "carry": {
+       "pax": 2,
+       "currency": "GBP"
+      },
+      "promptVersion": "gen-v3.2"
+     },
+     "screen": {
+      "id": "nonstop-14th:budget-couple:0:t0",
+      "nodeId": "search",
+      "context": {
+       "party": "couple",
+       "pax": "2",
+       "surface": "inline",
+       "currency": "GBP",
+       "origin": "MAN"
+      },
+      "variant": "stacked-fare-cards",
+      "rationale": "Phone surface: one fare per card, big tap targets.",
+      "messages": [
+       {
+        "version": "v0.9",
+        "createSurface": {
+         "surfaceId": "nonstop-14th-budget-couple-0-t0",
+         "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+        }
+       },
+       {
+        "version": "v0.9",
+        "updateComponents": {
+         "surfaceId": "nonstop-14th-budget-couple-0-t0",
+         "components": [
+          {
+           "id": "root",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "title",
+            "sub",
+            "fare_0",
+            "fare_1",
+            "fare_2",
+            "fare_3"
+           ]
+          },
+          {
+           "id": "title",
+           "component": "Text",
+           "text": "Nonstop · 14 Mar",
+           "variant": "h4"
+          },
+          {
+           "id": "sub",
+           "component": "Text",
+           "text": "2 travelers · GBP",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_0",
+           "component": "Card",
+           "child": "fare_0_col"
+          },
+          {
+           "id": "fare_0_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "fare_0_top",
+            "fare_0_meta",
+            "fare_0_btn"
+           ]
+          },
+          {
+           "id": "fare_0_top",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_0_flight",
+            "fare_0_total"
+           ]
+          },
+          {
+           "id": "fare_0_flight",
+           "component": "Text",
+           "text": "**FR8491** · Ryanair"
+          },
+          {
+           "id": "fare_0_total",
+           "component": "Text",
+           "text": "**£104**"
+          },
+          {
+           "id": "fare_0_meta",
+           "component": "Text",
+           "text": "Sun 14 Mar · 06:05 → 08:51 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_0_btn",
+           "component": "Button",
+           "child": "fare_0_btn_t",
+           "variant": "default",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "FR8491"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_0_btn_t",
+           "component": "Text",
+           "text": "Select"
+          },
+          {
+           "id": "fare_1",
+           "component": "Card",
+           "child": "fare_1_col"
+          },
+          {
+           "id": "fare_1_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "fare_1_top",
+            "fare_1_meta",
+            "fare_1_btn"
+           ]
+          },
+          {
+           "id": "fare_1_top",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_1_flight",
+            "fare_1_total"
+           ]
+          },
+          {
+           "id": "fare_1_flight",
+           "component": "Text",
+           "text": "**U24688** · easyJet"
+          },
+          {
+           "id": "fare_1_total",
+           "component": "Text",
+           "text": "**£100**"
+          },
+          {
+           "id": "fare_1_meta",
+           "component": "Text",
+           "text": "Sun 14 Mar · 06:40 → 09:23 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_1_btn",
+           "component": "Button",
+           "child": "fare_1_btn_t",
+           "variant": "default",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "U24688"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_1_btn_t",
+           "component": "Text",
+           "text": "Select"
+          },
+          {
+           "id": "fare_2",
+           "component": "Card",
+           "child": "fare_2_col"
+          },
+          {
+           "id": "fare_2_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "fare_2_top",
+            "fare_2_meta",
+            "fare_2_btn"
+           ]
+          },
+          {
+           "id": "fare_2_top",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_2_flight",
+            "fare_2_total"
+           ]
+          },
+          {
+           "id": "fare_2_flight",
+           "component": "Text",
+           "text": "**FR8944** · Ryanair"
+          },
+          {
+           "id": "fare_2_total",
+           "component": "Text",
+           "text": "**£120**"
+          },
+          {
+           "id": "fare_2_meta",
+           "component": "Text",
+           "text": "Sun 14 Mar · 07:10 → 09:59 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_2_btn",
+           "component": "Button",
+           "child": "fare_2_btn_t",
+           "variant": "default",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "FR8944"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_2_btn_t",
+           "component": "Text",
+           "text": "Select"
+          },
+          {
+           "id": "fare_3",
+           "component": "Card",
+           "child": "fare_3_col"
+          },
+          {
+           "id": "fare_3_col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "fare_3_top",
+            "fare_3_meta",
+            "fare_3_btn"
+           ]
+          },
+          {
+           "id": "fare_3_top",
+           "component": "Row",
+           "justify": "spaceBetween",
+           "align": "center",
+           "children": [
+            "fare_3_flight",
+            "fare_3_total"
+           ]
+          },
+          {
+           "id": "fare_3_flight",
+           "component": "Text",
+           "text": "**TP7447** · TAP Air Portugal"
+          },
+          {
+           "id": "fare_3_total",
+           "component": "Text",
+           "text": "**£122**"
+          },
+          {
+           "id": "fare_3_meta",
+           "component": "Text",
+           "text": "Sun 14 Mar · 08:25 → 11:17 · nonstop",
+           "variant": "caption"
+          },
+          {
+           "id": "fare_3_btn",
+           "component": "Button",
+           "child": "fare_3_btn_t",
+           "variant": "default",
+           "action": {
+            "event": {
+             "name": "selectFare",
+             "context": {
+              "flightId": "TP7447"
+             }
+            }
+           }
+          },
+          {
+           "id": "fare_3_btn_t",
+           "component": "Text",
+           "text": "Select"
+          }
+         ]
+        }
+       }
+      ],
+      "model": "sample",
+      "createdAt": "2026-11-21T12:00:00.000Z",
+      "annotations": []
+     },
+     "userAction": "Tapped U24688 £100",
+     "checks": [
+      {
+       "kind": "grounding",
+       "ok": true,
+       "message": "All 21 prices, times, flights and dates are in the tool results or carry"
+      },
+      {
+       "kind": "carry",
+       "ok": true,
+       "message": "Nothing chosen yet"
+      },
+      {
+       "kind": "schema",
+       "ok": true,
+       "message": "Screen renders (35 components)"
+      }
+     ],
+     "ms": 3503
+    },
+    {
+     "index": 1,
+     "userMessage": "U24688 is fine",
+     "intent": "select",
+     "ingredients": {
+      "context": {
+       "party": "couple",
+       "pax": "2",
+       "surface": "inline",
+       "currency": "GBP",
+       "origin": "MAN"
+      },
+      "history": [
+       "user: nonstop lisbon 14 march morning pls, cheap",
+       "assistant showed: stacked-fare-cards"
+      ],
+      "toolResults": [
+       {
+        "tool": "get_fare",
+        "args": {
+         "flightId": "U24688"
+        },
+        "fares": [
+         {
+          "flightId": "U24688",
+          "airline": "easyJet",
+          "origin": "MAN",
+          "destination": "LIS",
+          "date": "2027-03-14",
+          "depart": "06:40",
+          "arrive": "09:23",
+          "stops": 0,
+          "pricePerPax": 50,
+          "currency": "GBP",
+          "total": 100,
+          "pax": 2
+         }
+        ]
+       }
+      ],
+      "carry": {
+       "pax": 2,
+       "currency": "GBP",
+       "flightId": "U24688",
+       "total": 100,
+       "date": "2027-03-14",
+       "depart": "06:40"
+      },
+      "promptVersion": "gen-v3.2"
+     },
+     "screen": {
+      "id": "nonstop-14th:budget-couple:0:t1",
+      "nodeId": "select",
+      "context": {
+       "party": "couple",
+       "pax": "2",
+       "surface": "inline",
+       "currency": "GBP",
+       "origin": "MAN"
+      },
+      "variant": "fare-summary-card",
+      "rationale": "Confirm the chosen fare before paying.",
+      "messages": [
+       {
+        "version": "v0.9",
+        "createSurface": {
+         "surfaceId": "nonstop-14th-budget-couple-0-t1",
+         "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+        }
+       },
+       {
+        "version": "v0.9",
+        "updateComponents": {
+         "surfaceId": "nonstop-14th-budget-couple-0-t1",
+         "components": [
+          {
+           "id": "root",
+           "component": "Card",
+           "child": "col"
+          },
+          {
+           "id": "col",
+           "component": "Column",
+           "align": "stretch",
+           "children": [
+            "title",
+            "route",
+            "times",
+            "div",
+            "total",
+            "each",
+            "book"
+           ]
+          },
+          {
+           "id": "title",
+           "component": "Text",
+           "text": "U24688 · easyJet",
+           "variant": "h4"
+          },
+          {
+           "id": "route",
+           "component": "Text",
+           "text": "MAN → LIS · Sun 14 Mar",
+           "variant": "caption"
+          },
+          {
+           "id": "times",
+           "component": "Text",
+           "text": "06:40 → 09:23 · nonstop"
+          },
+          {
+           "id": "div",
+           "component": "Divider"
+          },
+          {
+           "id": "total",
+           "component": "Text",
+           "text": "**£100** total · 2 travelers"
+          },
+          {
+           "id": "each",
+           "component": "Text",
+           "text": "£50 per person",
+           "variant": "caption"
+          },
+          {
+           "id": "book",
+           "component": "Button",
+           "child": "book_t",
+           "variant": "primary",
+           "action": {
+            "event": {
+             "name": "book",
+             "context": {
+              "flightId": "U24688"
+             }
+            }
+           }
+          },
+          {
+           "id": "book_t",
+           "component": "Text",
+           "text": "Book £100"
+          }
+         ]
+        }
+       }
+      ],
+      "model": "sample",
+      "createdAt": "2026-11-21T12:00:00.000Z",
+      "annotations": []
+     },
+     "userAction": "Booked U24688",
+     "checks": [
+      {
+       "kind": "grounding",
+       "ok": true,
+       "message": "All 7 prices, times, flights and dates are in the tool results or carry"
+      },
+      {
+       "kind": "carry",
+       "ok": true,
+       "message": "Chosen U24688 carried over unchanged"
+      },
+      {
+       "kind": "schema",
+       "ok": true,
+       "message": "Screen renders (10 components)"
+      },
+      {
+       "kind": "goal",
+       "ok": true,
+       "message": "Cheapest qualifying nonstop U24688 £100 was shown and booked"
+      }
+     ],
+     "ms": 2080
+    }
+   ],
+   "outcome": "booked",
+   "goalMet": true
+  }
+ ],
+ "pins": [
+  {
+   "key": "search|family",
+   "intent": "search",
+   "personaId": "family",
+   "screenId": "nonstop-14th:family:0:t0",
+   "score": 0.92,
+   "evidence": 6
+  },
+  {
+   "key": "select|family",
+   "intent": "select",
+   "personaId": "family",
+   "screenId": "cheapest-morning:family:0:t1",
+   "score": 0.88,
+   "evidence": 5
+  }
+ ],
+ "previous": {
+  "journeys": 6,
+  "passRate": 0.5,
+  "goalRate": 0.67,
+  "bookedRate": 0.5,
+  "pinnedShare": 0,
+  "failingChecks": {
+   "grounding": 2,
+   "carry": 1,
+   "goal": 2,
+   "schema": 0
+  }
+ }
+}

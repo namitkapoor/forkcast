@@ -11,7 +11,9 @@
     "check": "tsx scripts/check.ts",
     "preview": "vite preview",
     "simulate:llm": "tsx scripts/simulate-llm.ts",
-    "typecheck:api": "tsc --noEmit -p api"
+    "typecheck:api": "tsc --noEmit -p api",
+    "simulate:journeys": "tsx scripts/simulate-journeys.ts",
+    "check:journeys": "tsx scripts/journeys-check.ts"
   },
   "dependencies": {
     "@a2ui/react": "^0.15.0",

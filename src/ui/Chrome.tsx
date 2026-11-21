@@ -20,7 +20,7 @@ import {
   IconX,
 } from "./icons";
 
-export type Page = "flow" | "tests";
+export type Page = "journeys" | "flow" | "tests";
 
 export interface TopBarProps {
   title: string;
@@ -90,9 +90,9 @@ export function TopBar(p: TopBarProps) {
       </div>
 
       <nav className="pages seg" aria-label="Pages">
-        {(["flow", "tests"] as const).map((id) => (
+        {(["journeys", "flow", "tests"] as const).map((id) => (
           <button key={id} className={p.page === id ? "is-on" : ""} aria-current={p.page === id ? "page" : undefined} onClick={() => p.onPage(id)}>
-            {id === "flow" ? "Flow" : "Tests"}
+            {id === "journeys" ? "Journeys" : id === "flow" ? "Flow" : "Tests"}
           </button>
         ))}
       </nav>

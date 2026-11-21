@@ -24,6 +24,14 @@ export const models = {
   get assistant() {
     return env("FORKCAST_MODEL_ASSISTANT", "gemini-3.5-flash-lite");
   },
+  /** Journey assistant step: labels the intent and decides tool args. */
+  get journeyAssistant() {
+    return env("FORKCAST_MODEL_JOURNEY_ASSISTANT", "gemini-3.5-flash-lite");
+  },
+  /** Pinned mode: refills a pinned screen's data model from fresh tool results. */
+  get pinFill() {
+    return env("FORKCAST_MODEL_PIN_FILL", "gemini-3.5-flash-lite");
+  },
   /** Optional judge (not used yet). */
   get judge() {
     return env("FORKCAST_MODEL_JUDGE", "gemini-4-neon");

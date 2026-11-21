@@ -117,4 +117,6 @@ export interface JourneysFile {
   pins?: Pin[];
   /** Summary of the run before convergence, for the before/after beat. */
   previous?: SuiteSummary;
+  /** Naive-prompt baseline run (e.g. gen-v0), for the before/after beat. Full journeys live in `file`. */
+  baseline?: { promptVersion: string; summary: SuiteSummary; file: string };
 }
