@@ -156,7 +156,7 @@ export function Hero({ file, mode, onMode, queryId, turn, onQuery, onTurn, onOpe
         </div>
       </div>
 
-      <div className="hero__phones" style={{ ["--cols" as string]: cols.map(({ p }) => (p.context.surface === "fullscreen" ? "minmax(0, 1.5fr)" : "minmax(0, 1fr)")).join(" ") }}>
+      <div className="hero__phones" style={{ ["--cols" as string]: cols.map(() => "minmax(0, 1fr)").join(" ") }}>
         {cols.map(({ p, j }, i) => (
           <PersonaColumn
             key={p.id}
@@ -250,7 +250,7 @@ interface ColProps {
 
 function PersonaColumn({ p, conceal, color, q, j, turn, clock, explain, highlight, onHighlight, onOpen, onTurn }: ColProps) {
   const [chatRef, chatW] = useWidth<HTMLDivElement>();
-  const desktop = p.context.surface === "fullscreen";
+  const desktop = false; // every traveler shown on a phone for consistency
   const len = j?.turns.length ?? 0;
   const shown = Math.min(turn, len - 1);
   const ended = turn > len - 1;
