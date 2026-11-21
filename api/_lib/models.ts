@@ -1,40 +1,198 @@
-// Model ids in one place. Each can be overridden by env (FORKCAST_MODEL_*).
-// Read lazily so env loaded after import (Vite dev plugin, scripts) still applies.
+// Central LLM configuration loader.
+// Model IDs, reasoning capabilities (thinkingConfig), temperatures, timeouts, and retries are
+// sourced from `config.yaml` (git-tracked). Secrets (GEMINI_API_KEY) live in `.env` (gitignored).
+// Optional FORKCAST_MODEL_* env vars can still override individual model IDs if needed.
 
-const env = (k: string, d: string) => process.env[k]?.trim() || d;
+import { existsSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import type { ThinkingConfig, ThinkingLevel } from "@google/genai";
+import { parse as parseYaml } from "yaml";
+
+export type LlmRole =
+  | "generator"
+  | "generatorFallback"
+  | "editor"
+  | "assistant"
+  | "branchPlanner"
+  | "simulator"
+  | "journeyAssistant"
+  | "pinFill"
+  | "judge"
+  | "judgeFallback"
+  | "personaImage"
+  | "personaImageFallback"
+  | "transcribe"
+  | "transcribeFallback";
+
+export type ReasoningLevel = "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
+
+export interface ReasoningSpec {
+  enabled?: boolean;
+  thinkingLevel?: ReasoningLevel | null;
+  thinkingBudget?: number | null;
+  includeThoughts?: boolean;
+}
+
+export interface LlmEntrySpec {
+  description?: string;
+  model: string;
+  reasoning?: ReasoningSpec;
+  temperature?: number;
+  repairTemperature?: number;
+  timeoutMs?: number;
+  retries?: number;
+}
+
+export interface ResolvedLlmConfig {
+  role: LlmRole;
+  description: string;
+  model: string;
+  reasoning: ReasoningSpec;
+  thinkingConfig?: ThinkingConfig;
+  temperature?: number;
+  repairTemperature?: number;
+  timeoutMs: number;
+  retries: number;
+}
+
+interface RawConfigFile {
+  llm?: Partial<Record<LlmRole, LlmEntrySpec>>;
+}
+
+const ENV_OVERRIDE: Partial<Record<LlmRole, string>> = {
+  generator: "FORKCAST_MODEL_GENERATOR",
+  generatorFallback: "FORKCAST_MODEL_GENERATOR_FALLBACK",
+  editor: "FORKCAST_MODEL_EDITOR",
+  assistant: "FORKCAST_MODEL_ASSISTANT",
+  branchPlanner: "FORKCAST_MODEL_BRANCH_PLANNER",
+  simulator: "FORKCAST_MODEL_SIMULATOR",
+  journeyAssistant: "FORKCAST_MODEL_JOURNEY_ASSISTANT",
+  pinFill: "FORKCAST_MODEL_PIN_FILL",
+  judge: "FORKCAST_MODEL_JUDGE",
+  judgeFallback: "FORKCAST_MODEL_JUDGE_FALLBACK",
+  personaImage: "FORKCAST_MODEL_PERSONA_IMAGE",
+  personaImageFallback: "FORKCAST_MODEL_PERSONA_IMAGE_FALLBACK",
+  transcribe: "FORKCAST_MODEL_TRANSCRIBE",
+  transcribeFallback: "FORKCAST_MODEL_TRANSCRIBE_FALLBACK",
+};
+
+const VALID_LEVELS = new Set<string>(["MINIMAL", "LOW", "MEDIUM", "HIGH"]);
+
+function findConfigPath(): string {
+  const explicit = process.env.FORKCAST_CONFIG_PATH?.trim();
+  if (explicit && existsSync(explicit)) return path.resolve(explicit);
+
+  const candidates = [
+    path.resolve(process.cwd(), "config.yaml"),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../config.yaml"),
+  ];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  throw new Error(`config.yaml not found (checked: ${candidates.join(", ")})`);
+}
+
+let cachedPath = "";
+let cachedMtime = -1;
+let cachedConfig: RawConfigFile | null = null;
+
+function loadRawConfig(): RawConfigFile {
+  const file = findConfigPath();
+  const mtime = statSync(file).mtimeMs;
+  if (cachedConfig && cachedPath === file && cachedMtime === mtime) {
+    return cachedConfig;
+  }
+  const parsed = parseYaml(readFileSync(file, "utf8")) as RawConfigFile | null;
+  if (!parsed || typeof parsed !== "object" || !parsed.llm || typeof parsed.llm !== "object") {
+    throw new Error(`Invalid config.yaml at ${file}: expected top-level 'llm' mapping`);
+  }
+  cachedPath = file;
+  cachedMtime = mtime;
+  cachedConfig = parsed;
+  return parsed;
+}
+
+export function toThinkingConfig(reasoning?: ReasoningSpec): ThinkingConfig | undefined {
+  if (!reasoning || reasoning.enabled === false) return undefined;
+  const out: ThinkingConfig = {};
+  if (reasoning.thinkingLevel && VALID_LEVELS.has(reasoning.thinkingLevel)) {
+    out.thinkingLevel = reasoning.thinkingLevel as ThinkingLevel;
+  }
+  if (typeof reasoning.thinkingBudget === "number" && Number.isFinite(reasoning.thinkingBudget)) {
+    out.thinkingBudget = reasoning.thinkingBudget;
+  }
+  if (typeof reasoning.includeThoughts === "boolean") {
+    out.includeThoughts = reasoning.includeThoughts;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+export function getLlmConfig(role: LlmRole): ResolvedLlmConfig {
+  const raw = loadRawConfig();
+  const entry = raw.llm?.[role];
+  if (!entry || typeof entry.model !== "string" || !entry.model.trim()) {
+    throw new Error(`Missing llm.${role}.model in config.yaml`);
+  }
+  const envKey = ENV_OVERRIDE[role];
+  const envModel = envKey ? process.env[envKey]?.trim() : "";
+  const model = envModel || entry.model.trim();
+  const reasoning = entry.reasoning ?? { enabled: false };
+  return {
+    role,
+    description: entry.description ?? "",
+    model,
+    reasoning,
+    thinkingConfig: toThinkingConfig(reasoning),
+    temperature: typeof entry.temperature === "number" ? entry.temperature : undefined,
+    repairTemperature: typeof entry.repairTemperature === "number" ? entry.repairTemperature : undefined,
+    timeoutMs: typeof entry.timeoutMs === "number" ? entry.timeoutMs : 45_000,
+    retries: typeof entry.retries === "number" ? entry.retries : 3,
+  };
+}
 
 export const models = {
-  /** Generates A2UI screens. */
   get generator() {
-    return env("FORKCAST_MODEL_GENERATOR", "gemini-4-hydrogen");
+    return getLlmConfig("generator").model;
   },
-  /** Used when the generator errors or times out. */
   get generatorFallback() {
-    return env("FORKCAST_MODEL_GENERATOR_FALLBACK", "gemini-4-argon");
+    return getLlmConfig("generatorFallback").model;
   },
-  /** Simulated users (persona steps), and the quick "what node is this?" planning call in /api/branch. */
   get simulator() {
-    return env("FORKCAST_MODEL_SIMULATOR", "gemini-3.5-flash-lite");
+    return getLlmConfig("simulator").model;
   },
-  /** Edits an existing screen from a chat instruction (falls back to generatorFallback). */
+  get branchPlanner() {
+    return getLlmConfig("branchPlanner").model;
+  },
   get editor() {
-    return env("FORKCAST_MODEL_EDITOR", "gemini-4-hydrogen");
+    return getLlmConfig("editor").model;
   },
-  /** Short answers about the run in the chat panel. */
   get assistant() {
-    return env("FORKCAST_MODEL_ASSISTANT", "gemini-3.5-flash-lite");
+    return getLlmConfig("assistant").model;
   },
-  /** Journey assistant step: labels the intent and decides tool args. */
   get journeyAssistant() {
-    return env("FORKCAST_MODEL_JOURNEY_ASSISTANT", "gemini-3.5-flash-lite");
+    return getLlmConfig("journeyAssistant").model;
   },
-  /** Pinned mode: refills a pinned screen's data model from fresh tool results. */
   get pinFill() {
-    return env("FORKCAST_MODEL_PIN_FILL", "gemini-3.5-flash-lite");
+    return getLlmConfig("pinFill").model;
   },
-  /** Optional judge (not used yet). */
   get judge() {
-    return env("FORKCAST_MODEL_JUDGE", "gemini-4-neon");
+    return getLlmConfig("judge").model;
+  },
+  get judgeFallback() {
+    return getLlmConfig("judgeFallback").model;
+  },
+  get personaImage() {
+    return getLlmConfig("personaImage").model;
+  },
+  get personaImageFallback() {
+    return getLlmConfig("personaImageFallback").model;
+  },
+  get transcribe() {
+    return getLlmConfig("transcribe").model;
+  },
+  get transcribeFallback() {
+    return getLlmConfig("transcribeFallback").model;
   },
 };
 
@@ -43,6 +201,7 @@ export function modelSnapshot(): Record<string, string> {
     generator: models.generator,
     generatorFallback: models.generatorFallback,
     simulator: models.simulator,
+    branchPlanner: models.branchPlanner,
     editor: models.editor,
     assistant: models.assistant,
   };

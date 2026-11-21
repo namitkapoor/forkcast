@@ -5,6 +5,8 @@ import { componentRects, pickInLasso, type ComponentRect, type Point } from "../
 import { THUMB_H, THUMB_W } from "./geometry";
 import { useCanvas } from "./context";
 import { useHover } from "./hoverStore";
+import { useBrowserVoice } from "../ui/useBrowserVoice";
+import { VoiceButton, VoiceFeedback } from "../ui/VoiceButton";
 
 // Figma-style overlay above a selected screen: hover box with a type tag, selected boxes with
 // corner handles, the lasso, AI-changed outlines, annotation pins and the comment popover.
@@ -183,6 +185,7 @@ function DraftPopover({ top, x, y, inv }: { top: number; x: number; y: number; i
   const { draft, cancelDraft, saveDraft } = useCanvas();
   const [text, setText] = useState("");
   const [kind, setKind] = useState<Annotation["kind"]>("note");
+  const voice = useBrowserVoice({ value: text, onChange: setText });
   const input = useRef<HTMLTextAreaElement>(null);
   useEffect(() => input.current?.focus({ preventScroll: true }), []);
   const zoom = useViewportStore((s) => s.transform[2]);
@@ -198,12 +201,20 @@ function DraftPopover({ top, x, y, inv }: { top: number; x: number; y: number; i
     setFlip(r.right + 280 > rightEdge && r.left - 280 > leftEdge);
   }, [zoom, top]);
   if (!draft) return null;
-  const submit = () => (text.trim() ? saveDraft(text.trim(), kind) : cancelDraft());
+  const cancel = () => {
+    voice.stop();
+    cancelDraft();
+  };
+  const submit = () => {
+    voice.stop();
+    if (text.trim()) saveDraft(text.trim(), kind);
+    else cancelDraft();
+  };
   return (
     <>
       <span ref={anchor} className="pin pin--draft" style={{ left: `${x * 100}%`, top: `${y * 100}%`, transform: `scale(${inv})` }} />
       <div
-        className={`composer nodrag nopan nowheel nokeys${flip ? " composer--flip" : ""}`}
+        className={`composer nodrag nopan nowheel nokeys${flip ? " composer--flip" : ""}${voice.isListening ? " is-listening" : ""}`}
         style={{
           ...(flip ? { right: `calc(100% + ${14 * inv}px)` } : { left: `calc(100% + ${14 * inv}px)` }),
           top: `${top * 100}%`,
@@ -231,7 +242,7 @@ function DraftPopover({ top, x, y, inv }: { top: number; x: number; y: number; i
           ref={input}
           value={text}
           rows={2}
-          placeholder="Wrong price shown…"
+          placeholder="Speak or type a note…"
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             e.stopPropagation();
@@ -239,14 +250,21 @@ function DraftPopover({ top, x, y, inv }: { top: number; x: number; y: number; i
               e.preventDefault();
               submit();
             }
-            if (e.key === "Escape") cancelDraft();
+            if (e.key === "Escape") {
+              if (voice.isListening) voice.stop();
+              else cancel();
+            }
           }}
         />
+        <VoiceFeedback voice={voice} />
         <div className="composer__actions">
-          <button onClick={cancelDraft}>Cancel</button>
-          <button className="is-primary" onClick={submit}>
-            Pin {kind}
-          </button>
+          <VoiceButton voice={voice} label="Speak" ariaLabel="Speak annotation" />
+          <div className="composer__actions-right">
+            <button onClick={cancel}>Cancel</button>
+            <button className="is-primary" onClick={submit}>
+              Pin {kind}
+            </button>
+          </div>
         </div>
       </div>
     </>

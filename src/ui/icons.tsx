@@ -119,3 +119,15 @@ export const IconStep = base(
     <rect x="13" y="3.5" width="7" height="17" rx="2" />
   </>,
 );
+export const IconMic = base(
+  <>
+    <rect x="9" y="3" width="6" height="11" rx="3" />
+    <path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21M9 21h6" />
+  </>,
+);
+export const IconMicOff = base(
+  <>
+    <path d="M9 5a3 3 0 016 0v5.5M15 14a3 3 0 01-6 0v-2" />
+    <path d="M5.5 11a6.5 6.5 0 0010.8 4.8M18.5 11a6.4 6.4 0 01-.5 2.5M12 17.5V21M9 21h6M3 3l18 18" />
+  </>,
+);

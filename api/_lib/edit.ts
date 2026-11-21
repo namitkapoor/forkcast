@@ -3,7 +3,7 @@ import { A2UI_VERSION, BASIC_CATALOG_ID, type A2uiMessage, type Screen } from ".
 import { catalogPromptSummary, validateMessages } from "../../src/a2ui/validate.js";
 import { callJson, HttpError, TimeoutError } from "./gemini.js";
 import { getAt, getComponents, getDataModel, lintBindings, pinSurfaceId, screenToText } from "./dataModel.js";
-import { models } from "./models.js";
+import { getLlmConfig, type ResolvedLlmConfig } from "./models.js";
 
 // Edits an existing A2UI screen from a chat instruction, touching only what the instruction needs.
 // Same shape as screen.ts: primary model with fallback, validate, one repair round, then guardrails.
@@ -112,17 +112,27 @@ export async function editScreen(req: EditScreenRequest, budgetMs = 55_000): Pro
   ].join("\n\n");
 
   const attempts: EditScreenResponse["attempts"] = [];
-  let first: { data: ModelEdit; model: string; raw: string } | undefined;
-  for (const model of [models.editor, models.generatorFallback]) {
-    const timeoutMs = Math.min(model === models.editor ? 34_000 : remaining() - 2000, remaining() - 2000);
+  const editorCfg = getLlmConfig("editor");
+  const fallbackCfg = getLlmConfig("generatorFallback");
+  let first: { data: ModelEdit; model: string; raw: string; cfg: ResolvedLlmConfig } | undefined;
+  for (const cfg of [editorCfg, fallbackCfg]) {
+    const timeoutMs = Math.min(cfg === editorCfg ? cfg.timeoutMs : remaining() - 2000, remaining() - 2000);
     if (timeoutMs < 4000) break;
     try {
-      const r = await callJson<ModelEdit>({ model, system, prompt, temperature: 0.3, timeoutMs, retries: 2 });
-      attempts.push({ model, ms: r.ms, ok: true });
-      first = r;
+      const r = await callJson<ModelEdit>({
+        model: cfg.model,
+        system,
+        prompt,
+        temperature: cfg.temperature ?? 0.3,
+        thinkingConfig: cfg.thinkingConfig,
+        timeoutMs,
+        retries: cfg.retries,
+      });
+      attempts.push({ model: cfg.model, ms: r.ms, ok: true });
+      first = { ...r, cfg };
       break;
     } catch (e) {
-      attempts.push({ model, ms: 0, ok: false, error: e instanceof TimeoutError ? "timeout" : String((e as Error)?.message ?? e).slice(0, 200) });
+      attempts.push({ model: cfg.model, ms: 0, ok: false, error: e instanceof TimeoutError ? "timeout" : String((e as Error)?.message ?? e).slice(0, 200) });
     }
   }
   if (!first) throw new HttpError(502, "screen edit failed", attempts);
@@ -138,7 +148,15 @@ export async function editScreen(req: EditScreenRequest, budgetMs = 55_000): Pro
       `Return the corrected full JSON object (same shape). Fix every problem; keep your edit otherwise.`,
     ].join("\n\n");
     try {
-      const r = await callJson<ModelEdit>({ model: first.model, system, prompt: repairPrompt, temperature: 0.2, timeoutMs: remaining() - 1000, retries: 1 });
+      const r = await callJson<ModelEdit>({
+        model: first.model,
+        system,
+        prompt: repairPrompt,
+        temperature: first.cfg.repairTemperature ?? 0.2,
+        thinkingConfig: first.cfg.thinkingConfig,
+        timeoutMs: remaining() - 1000,
+        retries: 1,
+      });
       attempts.push({ model: first.model, ms: r.ms, ok: true });
       const res2 = check(r.data, surfaceId, before, allowValues);
       if (res2.a2ui.length < res.a2ui.length || (!res2.a2ui.length && res2.other.length <= res.other.length)) {
