@@ -54,7 +54,7 @@ export const models = {
   },
   /** Used when the generator errors or times out. */
   get generatorFallback() {
-    return firstEnv("FORKCAST_MODEL_GENERATOR_FALLBACK", "GEMINI_FLOW_ARCHITECT_MODEL") ?? "gemini-4-argon";
+    return firstEnv("FORKCAST_MODEL_GENERATOR_FALLBACK") ?? "gemini-4-neon";
   },
   /** Simulated users (persona steps), and the quick "what node is this?" planning call in /api/branch. */
   get simulator() {
@@ -80,9 +80,13 @@ export const models = {
   get pinFill() {
     return firstEnv("FORKCAST_MODEL_PIN_FILL") ?? "gemini-3.5-flash-lite";
   },
-  /** Persona judge & UX critique evaluator. */
+  /** Persona judge & interactive UX critique evaluator (Neon by default for snappy <8s interactive critiques). */
   get judge() {
-    return firstEnv("FORKCAST_MODEL_JUDGE", "GEMINI_UX_EVAL_CORE_MODEL") ?? "gemini-4-neon";
+    return firstEnv("FORKCAST_MODEL_JUDGE", "GEMINI_VARIANT_CORE_MODEL") ?? "gemini-4-neon";
+  },
+  /** Deep UX evaluator model when configured (used with fast Neon/Hydrogen fallback). */
+  get uxEvalDeep() {
+    return firstEnv("FORKCAST_MODEL_UX_EVAL", "GEMINI_UX_EVAL_CORE_MODEL") ?? "gemini-4-neon";
   },
   /** Fast pre-flight ambiguity & micro-UI disambiguation model. */
   get disambiguate() {
@@ -104,7 +108,7 @@ export const taskConfigs = {
   get editCore(): TaskModelConfig {
     return {
       model: models.editorCore,
-      thinkingLevel: parseLevel(firstEnv("FORKCAST_THINKING_EDITOR_CORE", "GEMINI_REFINE_CORE_THINKING_LEVEL"), "HIGH"),
+      thinkingLevel: parseLevel(firstEnv("FORKCAST_THINKING_EDITOR_CORE"), "MEDIUM"),
     };
   },
   get disambiguate(): TaskModelConfig {
@@ -114,9 +118,11 @@ export const taskConfigs = {
     };
   },
   get uxEval(): TaskModelConfig {
+    // Interactive UI critique uses Neon (LOW) by default so responses return in ~4-7s instead of timing out on Carbon HIGH.
+    const model = firstEnv("FORKCAST_MODEL_JUDGE") ?? "gemini-4-neon";
     return {
-      model: firstEnv("GEMINI_UX_EVAL_CORE_MODEL", "FORKCAST_MODEL_JUDGE") ?? "gemini-4-neon",
-      thinkingLevel: parseLevel(firstEnv("FORKCAST_THINKING_UX_EVAL", "GEMINI_UX_EVAL_CORE_THINKING_LEVEL"), "MEDIUM"),
+      model,
+      thinkingLevel: parseLevel(firstEnv("FORKCAST_THINKING_UX_EVAL"), "LOW"),
     };
   },
   get transcribe(): TaskModelConfig {

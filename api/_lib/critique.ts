@@ -1,7 +1,7 @@
-import type { CritiquePin, CritiqueScreenRequest, CritiqueScreenResponse } from "../../src/lib/api.js";
-import { callJson, HttpError } from "./gemini.js";
+import type { CritiquePin, CritiqueScreenRequest, CritiqueScreenResponse, TokenUsage } from "../../src/lib/api.js";
+import { callJson, HttpError, type JsonCallResult } from "./gemini.js";
 import { getComponents, screenToText } from "./dataModel.js";
-import { taskConfigs } from "./models.js";
+import { models, taskConfigs, type ThinkingLevelSetting } from "./models.js";
 
 const SYSTEM = `You are a Principal UX & QA Evaluator for Forkcast, reviewing a generated flight-booking A2UI screen.
 Evaluate the screen across 4 dimensions (0 to 100 each): usability, hierarchy, accessibility, continuity (how well it carries context and satisfies transition contracts).
@@ -36,7 +36,6 @@ export async function critiqueScreen(req: CritiqueScreenRequest): Promise<Critiq
   const validIds = new Set(comps.map((c) => String(c.id)));
   const compList = comps.slice(0, 60).map((c) => `${String(c.id)} (${String(c.type)})`).join(", ");
 
-  const task = taskConfigs.uxEval;
   const prompt = [
     `Step: ${req.nodeLabel || screen.nodeId} (stage: ${req.stage || "unknown"})`,
     `User context: ${JSON.stringify(screen.context ?? {})}`,
@@ -49,31 +48,62 @@ export async function critiqueScreen(req: CritiqueScreenRequest): Promise<Critiq
     .filter(Boolean)
     .join("\n\n");
 
-  const r = await callJson<RawCritique>({
-    model: task.model,
-    thinkingLevel: task.thinkingLevel,
-    system: SYSTEM,
-    prompt,
-    temperature: 0.25,
-    timeoutMs: 28_000,
-    retries: 2,
-  }).catch((e) => {
-    throw new HttpError(502, `UX critique failed: ${(e as Error).message}`);
+  const primary = taskConfigs.uxEval;
+  const candidates: { model: string; level: ThinkingLevelSetting; timeoutMs: number }[] = [
+    { model: primary.model, level: primary.thinkingLevel ?? "MEDIUM", timeoutMs: 26_000 },
+    { model: "gemini-4-hydrogen", level: "LOW", timeoutMs: 20_000 },
+    ...(models.uxEvalDeep !== primary.model ? [{ model: models.uxEvalDeep, level: "LOW" as const, timeoutMs: 32_000 }] : []),
+  ];
+
+  // Deduplicate identical model+level pairs
+  const seen = new Set<string>();
+  const uniqueCandidates = candidates.filter((c) => {
+    const k = `${c.model}:${c.level}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
   });
 
-  const dims = (r.data?.dimensions && typeof r.data.dimensions === "object" ? r.data.dimensions : {}) as Record<string, unknown>;
+  let result: JsonCallResult<RawCritique> | undefined;
+  const errors: string[] = [];
+  let accumulatedUsage: TokenUsage | undefined;
+
+  for (const cand of uniqueCandidates) {
+    try {
+      const r = await callJson<RawCritique>({
+        model: cand.model,
+        thinkingLevel: cand.level,
+        system: SYSTEM,
+        prompt,
+        temperature: 0.25,
+        timeoutMs: cand.timeoutMs,
+        retries: 1,
+      });
+      accumulatedUsage = r.usage;
+      result = r;
+      break;
+    } catch (e) {
+      errors.push(`${cand.model} (${cand.level}): ${(e as Error).message}`);
+    }
+  }
+
+  if (!result) {
+    throw new HttpError(502, `UX critique failed across models: ${errors.join(" | ")}`);
+  }
+
+  const dims = (result.data?.dimensions && typeof result.data.dimensions === "object" ? result.data.dimensions : {}) as Record<string, unknown>;
   const usability = clampScore(dims.usability, 80);
   const hierarchy = clampScore(dims.hierarchy, 78);
   const accessibility = clampScore(dims.accessibility, 82);
   const continuity = clampScore(dims.continuity, 80);
   const overallScore = clampScore(
-    r.data?.overallScore,
+    result.data?.overallScore,
     Math.round((usability + hierarchy + accessibility + continuity) / 4),
   );
 
   const pins: CritiquePin[] = [];
-  if (Array.isArray(r.data?.pins)) {
-    for (const rawPin of r.data.pins.slice(0, 4)) {
+  if (Array.isArray(result.data?.pins)) {
+    for (const rawPin of result.data.pins.slice(0, 4)) {
       if (!rawPin || typeof rawPin !== "object") continue;
       const p = rawPin as Record<string, unknown>;
       const text = typeof p.text === "string" ? p.text.trim().slice(0, 180) : "";
@@ -89,13 +119,13 @@ export async function critiqueScreen(req: CritiqueScreenRequest): Promise<Critiq
       overallScore,
       dimensions: { usability, hierarchy, accessibility, continuity },
       summary:
-        typeof r.data?.summary === "string" && r.data.summary.trim()
-          ? r.data.summary.trim().slice(0, 300)
+        typeof result.data?.summary === "string" && result.data.summary.trim()
+          ? result.data.summary.trim().slice(0, 300)
           : `Scored ${overallScore}/100 across usability, hierarchy, accessibility, and contract continuity.`,
       pins,
-      model: r.model,
+      model: result.model,
       evaluatedAt: new Date().toISOString(),
     },
-    usage: r.usage,
+    usage: accumulatedUsage,
   };
 }

@@ -450,73 +450,89 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
         </div>
       </section>
 
-      {uxReport && (
-        <section className="block">
-          <div className="ann-head">
-            <h3>
-              UX Critique <span className="badge badge--accent">{uxReport.overallScore}/100</span>
-            </h3>
-            <button className="msg__link" onClick={p.onOpenHistory} title="View all saved critiques and chats in History">
-              History ({p.critiqueHistory.length}) →
-            </button>
+      <section className="block">
+        <div className="ann-head">
+          <h3>
+            UX Critique
+            {uxReport && <span className="badge badge--accent">{uxReport.overallScore}/100</span>}
+          </h3>
+          <button className="msg__link" onClick={p.onOpenHistory} title="View all saved critiques and chats in History">
+            History ({p.critiqueHistory.length}) →
+          </button>
+        </div>
+
+        {p.critiquing && (
+          <div className="msg msg--pending" style={{ marginBottom: uxReport ? 8 : 0 }}>
+            <span className="spinner" /> Evaluating usability, hierarchy, accessibility &amp; contracts…
           </div>
-          {screenCritiques.length > 1 && (
-            <div className="chips" style={{ marginTop: 0, marginBottom: 8 }}>
-              {screenCritiques.map((c, idx) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  className={`vchip${activeCritique?.id === c.id ? " is-on" : ""}`}
-                  onClick={() => setSelectedCritiqueId(c.id)}
-                >
-                  #{screenCritiques.length - idx} · v{c.versionIndex + 1} · {c.report.overallScore}
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="ux-dims">
-            <div className="ux-dim">
-              <span>Usability</span>
-              <b>{uxReport.dimensions.usability}</b>
-            </div>
-            <div className="ux-dim">
-              <span>Hierarchy</span>
-              <b>{uxReport.dimensions.hierarchy}</b>
-            </div>
-            <div className="ux-dim">
-              <span>Access.</span>
-              <b>{uxReport.dimensions.accessibility}</b>
-            </div>
-            <div className="ux-dim">
-              <span>Continuity</span>
-              <b>{uxReport.dimensions.continuity}</b>
-            </div>
-          </div>
-          <p className="muted small" style={{ margin: "6px 0 0" }}>
-            {uxReport.summary}
+        )}
+
+        {!uxReport && !p.critiquing && (
+          <p className="muted small" style={{ margin: 0 }}>
+            Click <b>Critique UX</b> above to evaluate this screen with Gemini and pin actionable findings.
           </p>
-          {uxReport.pins.length > 0 && (
-            <ul className="hist-pins" style={{ marginTop: 8 }}>
-              {uxReport.pins.map((pin, idx) => {
-                const tok = activeCritique?.pinTokens[idx];
-                return (
-                  <li key={idx}>
-                    {tok ? (
-                      <button type="button" className="note__tok" onClick={() => p.onMentionInChat(tok)}>
-                        {tok}
-                      </button>
-                    ) : (
-                      <code>{pin.kind}</code>
-                    )}
-                    {pin.componentId && <code className="muted">{pin.componentId}</code>}
-                    <span>{pin.text}</span>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
-      )}
+        )}
+
+        {uxReport && (
+          <>
+            {screenCritiques.length > 1 && (
+              <div className="chips" style={{ marginTop: 0, marginBottom: 8 }}>
+                {screenCritiques.map((c, idx) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={`vchip${activeCritique?.id === c.id ? " is-on" : ""}`}
+                    onClick={() => setSelectedCritiqueId(c.id)}
+                  >
+                    #{screenCritiques.length - idx} · v{c.versionIndex + 1} · {c.report.overallScore}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="ux-dims">
+              <div className="ux-dim">
+                <span>Usability</span>
+                <b>{uxReport.dimensions.usability}</b>
+              </div>
+              <div className="ux-dim">
+                <span>Hierarchy</span>
+                <b>{uxReport.dimensions.hierarchy}</b>
+              </div>
+              <div className="ux-dim">
+                <span>Access.</span>
+                <b>{uxReport.dimensions.accessibility}</b>
+              </div>
+              <div className="ux-dim">
+                <span>Continuity</span>
+                <b>{uxReport.dimensions.continuity}</b>
+              </div>
+            </div>
+            <p className="muted small" style={{ margin: "6px 0 0" }}>
+              {uxReport.summary}
+            </p>
+            {uxReport.pins.length > 0 && (
+              <ul className="hist-pins" style={{ marginTop: 8 }}>
+                {uxReport.pins.map((pin, idx) => {
+                  const tok = activeCritique?.pinTokens[idx];
+                  return (
+                    <li key={idx}>
+                      {tok ? (
+                        <button type="button" className="note__tok" onClick={() => p.onMentionInChat(tok)}>
+                          {tok}
+                        </button>
+                      ) : (
+                        <code>{pin.kind}</code>
+                      )}
+                      {pin.componentId && <code className="muted">{pin.componentId}</code>}
+                      <span>{pin.text}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </>
+        )}
+      </section>
 
       {versions.list.length > 1 && (
         <section className="block">

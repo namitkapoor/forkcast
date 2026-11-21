@@ -2,6 +2,31 @@ import type { TranscribeRequest, TranscribeResponse } from "../../src/lib/api.js
 import { getClient, HttpError } from "./gemini.js";
 import { buildThinkingConfig, taskConfigs } from "./models.js";
 
+function extractTranscriptFromResponse(res: unknown): string {
+  const r = res as {
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{
+          text?: string;
+          thought?: boolean;
+          audioTranscription?: { text?: string };
+        }>;
+      };
+    }>;
+  };
+  const parts = r.candidates?.[0]?.content?.parts ?? [];
+  const chunks: string[] = [];
+  for (const part of parts) {
+    if (part.thought) continue;
+    if (typeof part.audioTranscription?.text === "string" && part.audioTranscription.text) {
+      chunks.push(part.audioTranscription.text);
+    } else if (typeof part.text === "string" && part.text) {
+      chunks.push(part.text);
+    }
+  }
+  return chunks.join(" ").replace(/\s+/g, " ").trim();
+}
+
 export async function transcribe(req: TranscribeRequest): Promise<TranscribeResponse> {
   const audioBase64 = typeof req?.audioBase64 === "string" ? req.audioBase64.trim() : "";
   if (!audioBase64) throw new HttpError(400, "audioBase64 is required");
@@ -44,7 +69,7 @@ export async function transcribe(req: TranscribeRequest): Promise<TranscribeResp
       },
     });
 
-    const transcript = (res.text ?? "").trim();
+    const transcript = extractTranscriptFromResponse(res);
     const meta = res.usageMetadata as
       | { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number }
       | undefined;

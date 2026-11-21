@@ -832,14 +832,22 @@ function Shell() {
       const contracts = derived.graph.transitions
         .filter((t) => (t.from === targetScreen.nodeId || t.to === targetScreen.nodeId) && t.contract?.carries.length)
         .map((t) => `${t.from}->${t.to} carries [${t.contract!.carries.join(", ")}]`);
+      const baseId = targetScreen.id.split("@")[0];
+      activeAbort.current?.abort();
+      const ctrl = new AbortController();
+      activeAbort.current = ctrl;
       setCritiquing(true);
+      setBusy({ key: baseId, label: "Critiquing UX", startedAt: Date.now() });
       try {
-        const res = await critiqueScreen({
-          screen: targetScreen,
-          nodeLabel: node?.label ?? targetScreen.nodeId,
-          stage: node?.stage ?? "unknown",
-          contracts,
-        });
+        const res = await critiqueScreen(
+          {
+            screen: targetScreen,
+            nodeLabel: node?.label ?? targetScreen.nodeId,
+            stage: node?.stage ?? "unknown",
+            contracts,
+          },
+          { signal: ctrl.signal },
+        );
         recordUsage(res.usage);
         setUxReports((prev) => {
           const next = { ...prev, [targetScreen.id]: res.report };
@@ -848,7 +856,6 @@ function Shell() {
         });
 
         // Anchor AI critique pins onto matching A2UI components on canvas
-        const baseId = targetScreen.id.split("@")[0];
         const verMatch = targetScreen.id.match(/@v(\d+)$/);
         const verIndex = verMatch ? Math.max(0, Number(verMatch[1]) - 1) : 0;
         const phoneEl = document.querySelector(`[data-screen="${CSS.escape(baseId)}"] .fc-phone`);
@@ -924,9 +931,20 @@ function Shell() {
           body: createdTokens.length ? `Saved to Inspector, Chat & History (${createdTokens.join(", ")})` : "Saved to Inspector, Chat & History",
         });
       } catch (e) {
-        apiError(e, "UX Critique");
+        if ((e as Error)?.name !== "AbortError") {
+          pushMsg(baseId, {
+            role: "system",
+            tone: "error",
+            text: `UX Critique failed\n${e instanceof Error ? e.message : String(e)}`,
+          });
+          apiError(e, "UX Critique");
+        }
       } finally {
         setCritiquing(false);
+        if (activeAbort.current === ctrl) {
+          activeAbort.current = null;
+          setBusy(null);
+        }
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
