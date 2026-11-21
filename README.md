@@ -2,6 +2,8 @@
 
 **A map of every path through a generated interface, used to test it and to predict it.**
 
+Live demo: https://forkcast-qa.vercel.app · Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+
 When an assistant generates its UI on the fly (a flight picker inside a chat, a checkout card, a seat map), no two users see the same screen. QA can't snapshot a screen that is different every time, and product can't learn from flows that never repeat exactly. Forkcast treats a generated interface as a graph of **states** and **transitions** rather than a pile of screens, then gives you an infinite canvas to see, test and annotate that graph.
 
 Zoom out and you see the decision tree: every route users and simulated agents took, colored by traffic and risk. Zoom in on a node and you see the actual screens that were generated there, side by side for different users, and you can annotate or edit them in place.
@@ -120,7 +122,7 @@ forkcast/
 
 ```
 npm install
-npm run dev                 # canvas at http://localhost:5173
+npm run dev                 # canvas + /api routes at http://localhost:5173 (needs GEMINI_API_KEY in .env)
 npm run check               # headless: simulate 500 sessions, run checks, print coverage
 npm run check -- --clean    # same, with the seeded price-drift bug turned off
 npm run build
