@@ -19,7 +19,7 @@ interface Props {
   /** Failing checks; each one with a componentId gets circled (red; amber for persona contracts). */
   failing: CheckResult[];
   /** Show the label tag next to each circle: true = all, "persona" = persona contracts only, false = none. */
-  tags?: boolean | "persona";
+  tags?: boolean | "persona" | "values";
   /** Embed without device chrome (chat bubble). */
   bare?: boolean;
   /** Numbered decision tags (Explain mode). */
@@ -62,7 +62,7 @@ export function CircledScreen({ screen, width, mode = "thumb", failing, tags = t
       targets.forEach((c, i) => {
         const r = at(c.componentId!);
         const persona = c.kind === "persona";
-        const label = persona ? contractLabel(c) : c.message || `${c.value} not grounded`;
+        const label = persona ? contractLabel(c) : tags === "values" && c.value ? c.value : c.message || `${c.value} not grounded`;
         // Several persona contracts on one component share one amber circle and one tag.
         const same = persona ? next.find((x) => x.persona && x.key.startsWith(`${c.componentId}-`)) : undefined;
         if (same) same.label = `${same.label} · ${label}`;
@@ -102,7 +102,7 @@ export function CircledScreen({ screen, width, mode = "thumb", failing, tags = t
       <ScreenFrame screen={screen} width={width} mode={mode} bare={bare} />
       {circles.map((c) => (
         <div key={c.key} className={`jr-circle${c.persona ? " jr-circle--persona" : ""}`} style={box(c)} data-circle={c.key} data-circle-kind={c.persona ? "persona" : "check"}>
-          {(tags === true || (tags === "persona" && c.persona)) && <span className={`jr-circle__tag${c.y > 0.8 ? " is-above" : ""}`}>{c.label}</span>}
+          {(tags === true || tags === "values" || (tags === "persona" && c.persona)) && <span className={`jr-circle__tag${c.y > 0.8 ? " is-above" : ""}`}>{c.label}</span>}
         </div>
       ))}
       {placed.map((p) =>

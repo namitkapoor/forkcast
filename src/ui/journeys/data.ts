@@ -61,6 +61,9 @@ export function loadNaiveJourneys(): Promise<JourneysFile | null> {
 
 export type HeroMode = "naive" | "checked";
 
+/** Persona contracts in the UI (hero "Serves <name>", amber circles, strip metric). Off for the demo; checks still run. */
+export const SHOW_PERSONA_CONTRACTS = false;
+
 /** Share of journeys with at least one made-up (ungrounded) fact. */
 export const inventedShare = (f: JourneysFile) =>
   f.journeys.length ? f.journeys.filter((j) => j.turns.some((t) => t.checks.some((c) => c.kind === "grounding" && !c.ok))).length / f.journeys.length : 0;

@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Journey, JourneysFile, Persona, Query } from "../../journeys/types";
 import { prefersReducedMotion } from "../storage";
 import { CircledScreen } from "./CircledScreen";
-import { cap, checkReason, contractStatus, contextChips, goalVerdict, inventedShare, isTap, pct, personaColor, pickJourney, shortPersona, sortQueries, turnOk, type HeroMode } from "./data";
+import { cap, checkReason, contractStatus, contextChips, goalVerdict, inventedShare, isTap, pct, personaColor, pickJourney, SHOW_PERSONA_CONTRACTS, shortPersona, sortQueries, turnOk, type HeroMode } from "./data";
 import { decisionMarks, decisionsOf, humanize, onlyIn, SOURCE_LABEL } from "./why";
 import { IconCheck, IconChevron, IconPlay, IconSend, IconX } from "../icons";
 
@@ -30,6 +30,9 @@ export function Hero({ file, mode, onMode, queryId, turn, onQuery, onTurn, onOpe
   const [clock, setClock] = useState<number | null>(null);
   // Explain mode: numbered "why" tags on each phone, from the screen's decisions (gen-v2).
   const [explain, setExplain] = useState(false);
+  // Demo hook: the naive run starts with no circles ("can you spot it?") until "Run Forkcast checks".
+  const [revealed, setRevealed] = useState(false);
+  const conceal = mode === "naive" && !revealed;
   const [hl, setHl] = useState<{ personaId: string; componentId: string } | null>(null);
   const curScreens = cols.map(({ j }) => (j && turn <= j.turns.length - 1 ? j.turns[turn]?.screen : undefined));
   const only = onlyIn(curScreens);
@@ -100,12 +103,24 @@ export function Hero({ file, mode, onMode, queryId, turn, onQuery, onTurn, onOpe
             </button>
           </div>
           <p className="hero-mode__line" data-headline>
-            {mode === "naive"
+            {mode === "naive" && !revealed
+              ? "They look right. Can you spot what’s wrong?"
+              : mode === "naive"
               ? `${pct(inventedShare(file))} of journeys showed made-up prices, times or dates`
               : inventedShare(file) === 0
                 ? "Every price, time and date traced to real fare data"
                 : `${Math.round((1 - inventedShare(file)) * file.journeys.length)} of ${file.journeys.length} journeys: every price, time and date traced to real fare data`}
           </p>
+          {mode === "naive" && !revealed && (
+            <button className="hero-run" onClick={() => setRevealed(true)} data-run-checks>
+              Run Forkcast checks
+            </button>
+          )}
+          {mode === "naive" && revealed && (
+            <button className="hero-reset" onClick={() => setRevealed(false)} data-reset>
+              Reset
+            </button>
+          )}
         </div>
       )}
 
@@ -168,6 +183,8 @@ export function Hero({ file, mode, onMode, queryId, turn, onQuery, onTurn, onOpe
             turn={turn}
             clock={clock}
             explain={explain}
+            conceal={conceal}
+            naive={mode === "naive"}
             highlight={hl?.personaId === p.id ? hl.componentId : null}
             onHighlight={(componentId) => setHl(componentId ? { personaId: p.id, componentId } : null)}
             onOpen={onOpen}
@@ -231,6 +248,10 @@ function Avatar({ p, size }: { p: Persona; size: number }) {
 
 interface ColProps {
   p: Persona;
+  /** Hide every check result (naive run before "Run Forkcast checks"). */
+  conceal: boolean;
+  /** Naive run: circle correctness failures only, tagged with the invented value. */
+  naive: boolean;
   color: string;
   explain: boolean;
   highlight: string | null;
@@ -243,7 +264,7 @@ interface ColProps {
   onTurn: (i: number) => void;
 }
 
-function PersonaColumn({ p, color, q, j, turn, clock, explain, highlight, onHighlight, onOpen, onTurn }: ColProps) {
+function PersonaColumn({ p, conceal, naive, color, q, j, turn, clock, explain, highlight, onHighlight, onOpen, onTurn }: ColProps) {
   const [chatRef, chatW] = useWidth<HTMLDivElement>();
   const desktop = p.context.surface === "fullscreen";
   const len = j?.turns.length ?? 0;
@@ -254,7 +275,8 @@ function PersonaColumn({ p, color, q, j, turn, clock, explain, highlight, onHigh
   const typing = !ended && clock !== null && !isTap(msg) && clock < msg.length;
   const draft = typing ? msg.slice(0, clock) : "";
   const verdict = j ? goalVerdict(j, q, p) : null;
-  const failing = cur && !ended ? cur.checks.filter((c) => !c.ok) : [];
+  const visibleFails = (t: Journey["turns"][number]) => (conceal ? [] : t.checks.filter((c) => !c.ok && (SHOW_PERSONA_CONTRACTS && !naive ? true : c.kind !== "persona")));
+  const failing = cur && !ended ? visibleFails(cur) : [];
   const errors = failing.filter((c) => c.kind !== "persona");
   const invented = failing.filter((c) => c.kind === "grounding").length;
   const contracts = !ended ? contractStatus(p, cur) : [];
@@ -297,7 +319,7 @@ function PersonaColumn({ p, color, q, j, turn, clock, explain, highlight, onHigh
   return (
     <div className="hero-col" data-persona={p.id}>
       <PersonaHead p={p} color={color} />
-      <div className={`hero-badge ${invented ? "is-bad" : "is-ok"}`} data-invented={invented}>
+      <div className={`hero-badge ${invented ? "is-bad" : "is-ok"}${conceal ? " is-hidden" : ""}`} data-invented={conceal ? undefined : invented} aria-hidden={conceal}>
         {invented ? `${invented} invented fact${invented === 1 ? "" : "s"} on this screen` : "0 invented facts on this screen"}
       </div>
 
@@ -359,8 +381,8 @@ function PersonaColumn({ p, color, q, j, turn, clock, explain, highlight, onHigh
                       <CircledScreen
                         screen={t.screen}
                         width={screenW}
-                        failing={last ? failing : t.checks.filter((c) => !c.ok)}
-                        tags={last ? "persona" : false}
+                        failing={last ? failing : visibleFails(t)}
+                        tags={last ? (naive ? "values" : "persona") : false}
                         bare
                         marks={last ? marks : []}
                         highlight={last ? highlight : null}
@@ -404,7 +426,7 @@ function PersonaColumn({ p, color, q, j, turn, clock, explain, highlight, onHigh
                 aria-label={`Turn ${i + 1}: ${cap(t.intent)}, ${turnOk(t) ? "all checks pass" : "failing checks"}`}
                 title={`Turn ${i + 1} · ${cap(t.intent)}`}
               >
-                <span className={`dot dot--${turnOk(t) ? "pass" : "fail"}`} />
+                <span className={`dot dot--${conceal || turnOk(t) ? "pass" : "fail"}`} />
               </button>
             ))}
           </span>
@@ -433,7 +455,7 @@ function PersonaColumn({ p, color, q, j, turn, clock, explain, highlight, onHigh
             )}
           </ol>
         )}
-        {errors.length ? (
+        {conceal ? null : errors.length ? (
           <ul className="hero-fails">
             {errors.slice(0, 2).map((c, i) => (
               <li key={i}>
@@ -447,7 +469,7 @@ function PersonaColumn({ p, color, q, j, turn, clock, explain, highlight, onHigh
             <IconCheck width={12} height={12} /> {ended ? "Journey finished" : "Every price, time and flight on screen is real"}
           </div>
         )}
-        {contracts.length > 0 && (
+        {SHOW_PERSONA_CONTRACTS && !conceal && contracts.length > 0 && (
           <div className="hero-serves" data-serves>
             <div className="hero-serves__h">
               Serves {shortPersona(p).replace(/^The /, "")}:{" "}

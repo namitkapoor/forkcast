@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Journey, JourneysFile } from "../../journeys/types";
 import { CircledScreen } from "./CircledScreen";
 import { extractFacts } from "./agg";
-import { cap, checkReason, contractStatus, day, goalVerdict, money, shortPersona, turnOk } from "./data";
+import { cap, checkReason, contractStatus, day, goalVerdict, money, shortPersona, SHOW_PERSONA_CONTRACTS, turnOk } from "./data";
 import { decisionMarks, decisionsOf, humanize, SOURCE_LABEL } from "./why";
 import type { CheckResult } from "../../journeys/types";
 import { IconCheck, IconX } from "../icons";
@@ -44,7 +44,7 @@ export function JourneyView({ file, journey: j, turn, onTurn }: Props) {
   const p = file.personas.find((x) => x.id === j.personaId);
   const t = j.turns[Math.min(turn, j.turns.length - 1)];
   const verdict = goalVerdict(j, q, p);
-  const failing = t ? t.checks.filter((c) => !c.ok) : [];
+  const failing = t ? t.checks.filter((c) => !c.ok && (SHOW_PERSONA_CONTRACTS || c.kind !== "persona")) : [];
   const [hl, setHl] = useState<string | null>(null);
   const onScreen = useMemo(() => {
     if (!t) return new Set<string>();
@@ -212,7 +212,7 @@ export function JourneyView({ file, journey: j, turn, onTurn }: Props) {
               <CheckRow key={i} c={c} />
             ))}
           </ul>
-          {contractStatus(p, t).length > 0 && (
+          {SHOW_PERSONA_CONTRACTS && contractStatus(p, t).length > 0 && (
             <>
               <h4 className="jr-checks__group" data-group="persona">
                 Persona contract <span className="muted">· does this screen serve {shortPersona(p).replace(/^The /, "")}?</span>

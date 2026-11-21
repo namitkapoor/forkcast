@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import type { Intent, JourneysFile, SuiteSummary } from "../../journeys/types";
 import { buildIntentGraph, summarize } from "./agg";
-import { pct, personaColor, pickJourney, shortPersona, type HeroMode } from "./data";
+import { pct, personaColor, pickJourney, shortPersona, SHOW_PERSONA_CONTRACTS, type HeroMode } from "./data";
 import { Hero } from "./Hero";
 import { IntentTree, type HeroPath } from "./IntentTree";
 import { NodePanel } from "./NodePanel";
@@ -10,7 +10,7 @@ const METRICS: { label: string; get: (s: SuiteSummary) => number | undefined; fm
   { label: "Journeys with zero errors", get: (s) => s.passRate, fmt: pct },
   {
     label: "Serves the person",
-    get: (s) => s.servesRate,
+    get: (s) => (SHOW_PERSONA_CONTRACTS ? s.servesRate : undefined),
     fmt: pct,
     title: "Share of applicable persona-contract checks that pass (rules + Gemini judge), e.g. totals for 4, stops labeled, exclusions stated",
   },
