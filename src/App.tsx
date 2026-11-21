@@ -36,7 +36,22 @@ import { TestsPage } from "./ui/pages/TestsPage";
 import { JourneysPage } from "./ui/journeys/JourneysPage";
 import { loadJourneys, suiteStats } from "./ui/journeys/data";
 import { Dock, HelpOverlay, Toolbar, TopBar, Toasts, type Page, type Toast } from "./ui/Chrome";
-import { IconChat, IconLayers, IconPanel } from "./ui/icons";
+import { IconChat, IconHistory, IconLayers, IconPanel } from "./ui/icons";
+import { HistoryPanel } from "./ui/HistoryPanel";
+import {
+  fetchServerHistory,
+  loadAllLocalChats,
+  loadStoredCritiques,
+  loadStoredEvents,
+  mergeByIdSorted,
+  mergeChatMaps,
+  rememberChatKey,
+  saveStoredCritiques,
+  saveStoredEvents,
+  syncHistoryToServer,
+  type CritiqueRecord,
+  type HistoryEvent,
+} from "./ui/history";
 import {
   appendAnnotationRevision,
   createVersionedAnnotation,
@@ -100,14 +115,16 @@ function Shell() {
   const [uxReports, setUxReports] = useState<Record<string, UxEvaluationReport>>(() =>
     loadJson<Record<string, UxEvaluationReport>>("forkcast:uxReports", {}),
   );
+  const [critiqueHistory, setCritiqueHistory] = useState<CritiqueRecord[]>(() => loadStoredCritiques());
+  const [events, setEvents] = useState<HistoryEvent[]>(() => loadStoredEvents());
   const [tokenTotal, setTokenTotal] = useState<number>(() => loadJson<number>("forkcast:tokens:total", 0));
   const [picks, setPicksState] = useState<Picks | null>(null);
   const [changed, setChanged] = useState<{ versionId: string; ids: string[] } | null>(null);
   const [playTraffic, setPlayTraffic] = useState(false);
   const [replay, setReplay] = useState<ReplayState | null>(null);
   const [page, setPageState] = useState<Page>(pageFromHash);
-  const [leftTab, setLeftTab] = useState<"chat" | "layers" | "props">("chat");
-  const [chats, setChats] = useState<Record<string, ChatMsg[]>>({});
+  const [leftTab, setLeftTab] = useState<"chat" | "layers" | "history" | "props">("chat");
+  const [chats, setChats] = useState<Record<string, ChatMsg[]>>(() => loadAllLocalChats());
   const [chatDraft, setChatDraft] = useState("");
   const [detachedKeys, setDetachedKeys] = useState<string[]>([]);
   const [disambiguation, setDisambiguation] = useState<{ key: string; screen: Screen; state: PendingDisambiguationState } | null>(null);
@@ -149,10 +166,70 @@ function Shell() {
     setBusy(null);
   }, []);
 
+  const pushEvent = useCallback((ev: Omit<HistoryEvent, "id" | "at">) => {
+    setEvents((prev) => {
+      const next = [{ ...ev, id: uid("ev"), at: Date.now() }, ...prev].slice(0, 500);
+      saveStoredEvents(next);
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     document.documentElement.style.colorScheme = "dark";
     if (prefersReducedMotion()) document.documentElement.classList.add("reduce-motion");
   }, []);
+
+  // Load & merge persisted disk history (.cache/studio-history.json) on mount, and migrate any earlier uxReports
+  const serverLoadedRef = useRef(false);
+  useEffect(() => {
+    let live = true;
+    fetchServerHistory().then((srv) => {
+      if (!live) return;
+      if (srv) {
+        if (srv.chats && Object.keys(srv.chats).length > 0) {
+          setChats((prev) => mergeChatMaps(prev, srv.chats));
+        }
+        if (Array.isArray(srv.critiques) && srv.critiques.length > 0) {
+          setCritiqueHistory((prev) => {
+            const merged = mergeByIdSorted(prev, srv.critiques, (x) => x.createdAt);
+            saveStoredCritiques(merged);
+            return merged;
+          });
+        }
+        if (Array.isArray(srv.events) && srv.events.length > 0) {
+          setEvents((prev) => {
+            const merged = mergeByIdSorted(prev, srv.events, (x) => x.at);
+            saveStoredEvents(merged);
+            return merged;
+          });
+        }
+        if (typeof srv.tokenTotal === "number" && srv.tokenTotal > 0) {
+          setTokenTotal((prev) => Math.max(prev, srv.tokenTotal!));
+        }
+      }
+      serverLoadedRef.current = true;
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // Debounced durable sync of all chats, critiques, events, annotations, versions & branches to disk (/api/history)
+  useEffect(() => {
+    if (!serverLoadedRef.current) return;
+    const timer = window.setTimeout(() => {
+      void syncHistoryToServer({
+        chats,
+        critiques: critiqueHistory,
+        events,
+        annotations,
+        versions,
+        branches,
+        tokenTotal,
+      });
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [chats, critiqueHistory, events, annotations, versions, branches, tokenTotal]);
 
   useEffect(() => {
     let live = true;
@@ -221,6 +298,42 @@ function Shell() {
     const order = [...graph.nodes].sort((a, b) => placed.get(a.id)!.depth - placed.get(b.id)!.depth || placed.get(a.id)!.y - placed.get(b.id)!.y);
     return { project, graph, traces, folded, report, cov, screensByNode, screenById, sizes, placed, branchIds, failingByNode, order };
   }, [base, branches, runNonce]);
+
+  // Migrate any existing `uxReports` entries into `critiqueHistory`
+  useEffect(() => {
+    if (!derived) return;
+    const entries = Object.entries(uxReports);
+    if (!entries.length) return;
+    setCritiqueHistory((prev) => {
+      const seenScreens = new Set(prev.map((c) => `${c.screenId}:${c.report.evaluatedAt}`));
+      const migrated: CritiqueRecord[] = [];
+      for (const [sid, rep] of entries) {
+        const key = `${sid}:${rep.evaluatedAt}`;
+        if (seenScreens.has(key)) continue;
+        const baseId = sid.split("@")[0];
+        const verMatch = sid.match(/@v(\d+)$/);
+        const verIdx = verMatch ? Math.max(0, Number(verMatch[1]) - 1) : 0;
+        const baseScr = derived.screenById.get(baseId);
+        const node = baseScr ? derived.graph.nodes.find((n) => n.id === baseScr.nodeId) : undefined;
+        migrated.push({
+          id: `crit-mig-${sid}-${Date.parse(rep.evaluatedAt) || Date.now()}`,
+          screenId: sid,
+          baseScreenId: baseId,
+          versionIndex: verIdx,
+          nodeId: baseScr?.nodeId ?? "",
+          nodeLabel: node?.label ?? baseScr?.nodeId ?? baseId,
+          variant: baseScr?.variant ?? sid,
+          report: rep,
+          pinTokens: [],
+          createdAt: Date.parse(rep.evaluatedAt) || Date.now(),
+        });
+      }
+      if (!migrated.length) return prev;
+      const merged = [...migrated, ...prev].sort((a, b) => b.createdAt - a.createdAt);
+      saveStoredCritiques(merged);
+      return merged;
+    });
+  }, [derived, uxReports]);
 
   // Stored versions and normalized @Pin/@Mask annotations.
   useEffect(() => {
@@ -521,14 +634,25 @@ function Shell() {
         includeInAiFeedback: includeInAi,
       });
       addAnnotation(draft.screenId, created);
+      const refTok = formatVersionedRef(created);
+      const baseId = draft.screenId.split("@")[0];
+      const owner = latest.current?.screenById.get(baseId);
+      pushEvent({
+        kind: "pin",
+        title: `Pinned ${refTok} (${kind})`,
+        detail: text,
+        chips: [refTok, ...(draft.componentId ? [draft.componentId] : [])],
+        baseScreenId: baseId,
+        nodeId: owner?.nodeId,
+      });
       setDraft(null);
       toast({
         tone: "ok",
-        title: `${formatVersionedRef(created)} pinned`,
+        title: `${refTok} pinned`,
         body: draft.componentId ? `on ${draft.componentId}` : undefined,
       });
     },
-    [draft, toast, addAnnotation],
+    [draft, toast, addAnnotation, pushEvent],
   );
 
   const updateAnnotationInScreen = useCallback(
@@ -657,6 +781,13 @@ function Shell() {
         remember();
         setBranches((b) => ({ ...b, nodes: [...b.nodes, node], transitions: [...b.transitions, transition], screens: [...b.screens, newScreen] }));
         setSelection({ kind: "screen", id: newScreen.id, nodeId: id });
+        pushEvent({
+          kind: "branch",
+          title: `Branched → ${node.label}`,
+          detail: `“${utterance}” from ${fromNode.label}`,
+          baseScreenId: newScreen.id,
+          nodeId: id,
+        });
         toast({ tone: "ok", title: `Branched: ${node.label}`, body: `“${utterance}” from ${fromNode.label}` });
         window.setTimeout(() => focusNodes([id], 1), 60);
       } catch (e) {
@@ -718,38 +849,79 @@ function Shell() {
 
         // Anchor AI critique pins onto matching A2UI components on canvas
         const baseId = targetScreen.id.split("@")[0];
+        const verMatch = targetScreen.id.match(/@v(\d+)$/);
+        const verIndex = verMatch ? Math.max(0, Number(verMatch[1]) - 1) : 0;
         const phoneEl = document.querySelector(`[data-screen="${CSS.escape(baseId)}"] .fc-phone`);
         const rects = phoneEl ? componentRects(phoneEl) : [];
 
+        const createdTokens: string[] = [];
         if (res.report.pins.length > 0) {
           remember();
-          setAnnotations((prev) => {
-            let working = { ...prev };
-            const list = [...(working[targetScreen.id] ?? [])];
-            res.report.pins.forEach((pin, idx) => {
-              const r = pin.componentId ? rects.find((x) => x.id === pin.componentId) : undefined;
-              const x = r ? r.x + r.w / 2 : 0.78;
-              const y = r ? r.y + r.h / 2 : Math.min(0.88, 0.2 + idx * 0.16);
-              const created = createVersionedAnnotation(working, {
-                x,
-                y,
-                text: pin.text,
-                kind: pin.kind,
-                componentId: pin.componentId,
-                author: "ai-evaluator",
-                includeInAiFeedback: true,
-              });
-              list.push(created);
-              working = { ...working, [targetScreen.id]: list };
+          let working = { ...latestState.current.annotations };
+          const list = [...(working[targetScreen.id] ?? [])];
+          res.report.pins.forEach((pin, idx) => {
+            const r = pin.componentId ? rects.find((x) => x.id === pin.componentId) : undefined;
+            const x = r ? r.x + r.w / 2 : 0.78;
+            const y = r ? r.y + r.h / 2 : Math.min(0.88, 0.2 + idx * 0.16);
+            const created = createVersionedAnnotation(working, {
+              x,
+              y,
+              text: pin.text,
+              kind: pin.kind,
+              componentId: pin.componentId,
+              author: "ai-evaluator",
+              includeInAiFeedback: true,
             });
-            saveAnnotations(targetScreen.id, list);
-            return working;
+            createdTokens.push(formatVersionedRef(created));
+            list.push(created);
+            working = { ...working, [targetScreen.id]: list };
           });
+          saveAnnotations(targetScreen.id, list);
+          setAnnotations(working);
         }
+
+        const critRec: CritiqueRecord = {
+          id: uid("crit"),
+          screenId: targetScreen.id,
+          baseScreenId: baseId,
+          versionIndex: verIndex,
+          nodeId: targetScreen.nodeId,
+          nodeLabel: node?.label ?? targetScreen.nodeId,
+          variant: targetScreen.variant,
+          report: res.report,
+          pinTokens: createdTokens,
+          createdAt: Date.now(),
+        };
+        setCritiqueHistory((prev) => {
+          const next = [critRec, ...prev];
+          saveStoredCritiques(next);
+          return next;
+        });
+
+        // Also post the full UX Critique report directly into this screen's Chat conversation & Activity Log
+        const d = res.report.dimensions;
+        pushMsg(baseId, {
+          role: "system",
+          tone: "critique",
+          text: `UX Critique · ${res.report.overallScore}/100 (v${verIndex + 1})\nUsability ${d.usability} · Hierarchy ${d.hierarchy} · Access. ${d.accessibility} · Continuity ${d.continuity}\n${res.report.summary}`,
+          chips: createdTokens,
+          versionIndex: verIndex,
+        });
+        pushEvent({
+          kind: "critique",
+          title: `UX Critique ${res.report.overallScore}/100 · ${node?.label ?? targetScreen.nodeId} (v${verIndex + 1})`,
+          detail: res.report.summary,
+          chips: createdTokens,
+          baseScreenId: baseId,
+          versionIndex: verIndex,
+          nodeId: targetScreen.nodeId,
+          chatKey: baseId,
+        });
+        setCollapsed(false);
         toast({
           tone: "ok",
           title: `UX Critique: ${res.report.overallScore}/100`,
-          body: res.report.pins.length ? `Pinned ${res.report.pins.length} critique note(s)` : res.report.summary,
+          body: createdTokens.length ? `Saved to Inspector, Chat & History (${createdTokens.join(", ")})` : "Saved to Inspector, Chat & History",
         });
       } catch (e) {
         apiError(e, "UX Critique");
@@ -815,8 +987,9 @@ function Shell() {
   const chatKey = selection.kind === "screen" ? selection.id : selection.kind === "node" ? `node:${selection.id}` : selection.kind === "edge" ? `edge:${selection.key}` : "run";
   const messages = useMemo(() => chats[chatKey] ?? loadJson<ChatMsg[]>(`forkcast:chat:${chatKey}`, []), [chats, chatKey]);
   const pushMsg = useCallback((key: string, m: Omit<ChatMsg, "id" | "at">) => {
+    rememberChatKey(key);
     setChats((prev) => {
-      const list = [...(prev[key] ?? loadJson<ChatMsg[]>(`forkcast:chat:${key}`, [])), { ...m, id: uid("m"), at: Date.now() }].slice(-60);
+      const list = [...(prev[key] ?? loadJson<ChatMsg[]>(`forkcast:chat:${key}`, [])), { ...m, id: uid("m"), at: Date.now() }];
       saveJson(`forkcast:chat:${key}`, list);
       return { ...prev, [key]: list };
     });
@@ -953,6 +1126,12 @@ function Shell() {
         );
         recordUsage(res.usage);
         pushMsg(key, { role: "assistant", text: res.answer });
+        pushEvent({
+          kind: "chat",
+          title: `Q&A · ${sel.slice(0, 48)}`,
+          detail: `${question} → ${res.answer.slice(0, 120)}`,
+          chatKey: key,
+        });
       } catch (e) {
         if ((e as Error)?.name !== "AbortError") {
           pushMsg(key, { role: "system", tone: "error", text: `Couldn't answer\n${e instanceof Error ? e.message : String(e)}` });
@@ -1062,6 +1241,16 @@ function Shell() {
           chips: res.changed.slice(0, 8),
           versionIndex: n - 1,
         });
+        pushEvent({
+          kind: "edit",
+          title: `Edited ${labelOf(baseScreen.nodeId)} → v${n}`,
+          detail: res.summary,
+          chips: res.changed.slice(0, 6),
+          baseScreenId: baseScreen.id,
+          versionIndex: n - 1,
+          nodeId: baseScreen.nodeId,
+          chatKey: key,
+        });
       } catch (e) {
         if ((e as Error)?.name !== "AbortError") {
           pushMsg(key, { role: "system", tone: "error", text: `Edit failed\n${e instanceof Error ? e.message : String(e)}` });
@@ -1093,6 +1282,15 @@ function Shell() {
       });
       addAnnotation(payload.shownScreenId, created);
       const refTok = formatVersionedRef(created);
+      const ownerScr = derived?.screenById.get(payload.baseScreenId);
+      pushEvent({
+        kind: "mask",
+        title: `Painted ${refTok}`,
+        detail: payload.text,
+        chips: [refTok, ...payload.intersectingIds.slice(0, 4)],
+        baseScreenId: payload.baseScreenId,
+        nodeId: ownerScr?.nodeId,
+      });
       toast({
         tone: "ok",
         title: `${refTok} saved`,
@@ -1324,6 +1522,12 @@ function Shell() {
       remember();
       setBranches((b) => ({ ...b, traces: [...(b.traces ?? []), trace] }));
       setReplay({ traceId: trace.id, step: 0 });
+      pushEvent({
+        kind: "play",
+        title: `Play walkthrough (${trace.steps.length} steps · ${trace.outcome})`,
+        detail: trace.context.walkthrough,
+        traceId: trace.id,
+      });
       toast({
         tone: "ok",
         title: `Walkthrough recorded (${trace.steps.length} steps)`,
@@ -1572,6 +1776,7 @@ function Shell() {
         screenById: derived.screenById,
         annotations,
         uxReports,
+        critiqueHistory,
         selection,
         picks,
         tool,
@@ -1587,6 +1792,10 @@ function Shell() {
         onToggleHiddenVersion: toggleHiddenVersion,
         onCompareVersions: (baseId) => setCompareScreenId(baseId),
         onCritiqueScreen: runCritique,
+        onOpenHistory: () => {
+          setCollapsed(false);
+          setLeftTab("history");
+        },
         onReplay: setReplay,
         onFocusNode: focusNode,
         onFocusEdge: focusEdge,
@@ -1699,12 +1908,19 @@ function Shell() {
               </button>
               <div className="seg ptabs" role="tablist">
                 <button role="tab" aria-selected={leftTab === "chat"} className={leftTab === "chat" ? "is-on" : ""} onClick={() => setLeftTab("chat")}>
-                  <IconChat width={13} height={13} style={{ verticalAlign: -2, marginRight: 5 }} />
+                  <IconChat width={13} height={13} style={{ verticalAlign: -2, marginRight: 4 }} />
                   Chat
                 </button>
                 <button role="tab" aria-selected={leftTab === "layers"} className={leftTab === "layers" ? "is-on" : ""} onClick={() => setLeftTab("layers")}>
-                  <IconLayers width={13} height={13} style={{ verticalAlign: -2, marginRight: 5 }} />
+                  <IconLayers width={13} height={13} style={{ verticalAlign: -2, marginRight: 4 }} />
                   Layers
+                </button>
+                <button role="tab" aria-selected={leftTab === "history"} className={leftTab === "history" ? "is-on" : ""} onClick={() => setLeftTab("history")}>
+                  <IconHistory width={13} height={13} style={{ verticalAlign: -2, marginRight: 4 }} />
+                  History
+                  {(critiqueHistory.length > 0 || Object.keys(chats).length > 0) && (
+                    <span className="tab-dot" aria-hidden="true" />
+                  )}
                 </button>
                 {rightVisible && (
                   <button role="tab" aria-selected={leftTab === "props"} className={`ptab--props${leftTab === "props" ? " is-on" : ""}`} onClick={() => setLeftTab("props")}>
@@ -1725,6 +1941,81 @@ function Shell() {
                   onSelectNode={focusNode}
                   onSelectScreen={(id, nodeId) => selectScreen(id, nodeId, { focus: true })}
                   onPick={onPickLayer}
+                />
+              ) : leftTab === "history" ? (
+                <HistoryPanel
+                  graph={derived.graph}
+                  screenById={derived.screenById}
+                  chats={chats}
+                  critiques={critiqueHistory}
+                  events={events}
+                  activeChatKey={chatKey}
+                  onOpenChatThread={(key) => {
+                    if (key === "run") {
+                      clear();
+                    } else if (key.startsWith("node:")) {
+                      focusNode(key.slice(5));
+                    } else if (key.startsWith("edge:")) {
+                      focusEdge(key.slice(5));
+                    } else {
+                      const baseId = key.split("@")[0];
+                      const scr = derived.screenById.get(baseId);
+                      if (scr) selectScreen(scr.id, scr.nodeId, { focus: true });
+                    }
+                    setLeftTab("chat");
+                  }}
+                  onOpenCritique={(rec) => {
+                    const scr = derived.screenById.get(rec.baseScreenId);
+                    if (scr) {
+                      setVersion(scr.id, rec.versionIndex);
+                      selectScreen(scr.id, scr.nodeId, { focus: true });
+                    }
+                  }}
+                  onOpenEvent={(ev) => {
+                    if (ev.traceId) {
+                      setReplay({ traceId: ev.traceId, step: 0 });
+                    } else if (ev.baseScreenId) {
+                      const scr = derived.screenById.get(ev.baseScreenId);
+                      if (scr) {
+                        if (ev.versionIndex !== undefined) setVersion(scr.id, ev.versionIndex);
+                        selectScreen(scr.id, scr.nodeId, { focus: true });
+                      }
+                      if (ev.chatKey) setLeftTab("chat");
+                    } else if (ev.chatKey) {
+                      if (ev.chatKey === "run") clear();
+                      else if (ev.chatKey.startsWith("node:")) focusNode(ev.chatKey.slice(5));
+                      else if (ev.chatKey.startsWith("edge:")) focusEdge(ev.chatKey.slice(5));
+                      setLeftTab("chat");
+                    }
+                  }}
+                  onExportHistory={() => {
+                    const blob = new Blob(
+                      [
+                        JSON.stringify(
+                          {
+                            exportedAt: new Date().toISOString(),
+                            chats,
+                            critiques: critiqueHistory,
+                            events,
+                            annotations,
+                            versions,
+                            branches,
+                            tokenTotal,
+                          },
+                          null,
+                          2,
+                        ),
+                      ],
+                      { type: "application/json" },
+                    );
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `forkcast-history-${Date.now()}.json`;
+                    a.click();
+                    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+                    toast({ tone: "ok", title: "History exported", body: `${critiqueHistory.length} critiques · ${Object.keys(chats).length} chat threads` });
+                  }}
                 />
               ) : leftTab === "props" && propsProps && rightVisible ? (
                 <div className="rpanel__body" style={{ paddingTop: 4 }}>

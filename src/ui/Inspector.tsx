@@ -8,6 +8,7 @@ import { componentBindings, getComponents, getDataModel, resolveText } from "../
 import { ScreenFrame } from "../a2ui/ScreenFrame";
 import type { TokenUsage, UxEvaluationReport } from "../lib/api";
 import { formatVersionedRef, normalizeAnnotation } from "./annotations";
+import type { CritiqueRecord } from "./history";
 import {
   IconAlert,
   IconBranch,
@@ -57,6 +58,7 @@ export interface PropertiesProps {
   screenById: Map<string, Screen>;
   annotations: Record<string, Annotation[]>;
   uxReports: Record<string, UxEvaluationReport>;
+  critiqueHistory: CritiqueRecord[];
   selection: Selection;
   picks: Picks | null;
   tool: Tool;
@@ -72,6 +74,7 @@ export interface PropertiesProps {
   onToggleHiddenVersion: (baseId: string, index: number) => void;
   onCompareVersions: (baseId: string) => void;
   onCritiqueScreen: (screen: Screen) => void;
+  onOpenHistory: () => void;
   onReplay: (r: ReplayState | null) => void;
   onFocusNode: (id: string) => void;
   onFocusEdge: (key: string) => void;
@@ -334,7 +337,19 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
   const labelOf = useLabels(p.graph);
   const screenNotes = (p.annotations[shown.id] ?? []).map((a, i) => normalizeAnnotation(a, i + 1));
   const versions = p.versionsOf(screen.id);
-  const uxReport = p.uxReports[shown.id];
+  const screenCritiques = useMemo(
+    () => p.critiqueHistory.filter((c) => c.baseScreenId === screen.id).sort((a, b) => b.createdAt - a.createdAt),
+    [p.critiqueHistory, screen.id],
+  );
+  const [selectedCritiqueId, setSelectedCritiqueId] = useState<string | null>(null);
+  const activeCritique = useMemo(
+    () =>
+      (selectedCritiqueId ? screenCritiques.find((c) => c.id === selectedCritiqueId) : undefined) ??
+      screenCritiques.find((c) => c.screenId === shown.id) ??
+      screenCritiques[0],
+    [selectedCritiqueId, screenCritiques, shown.id],
+  );
+  const uxReport = activeCritique?.report ?? p.uxReports[shown.id];
 
   const [text, setText] = useState("");
   const textRef = useRef(text);
@@ -435,6 +450,74 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
         </div>
       </section>
 
+      {uxReport && (
+        <section className="block">
+          <div className="ann-head">
+            <h3>
+              UX Critique <span className="badge badge--accent">{uxReport.overallScore}/100</span>
+            </h3>
+            <button className="msg__link" onClick={p.onOpenHistory} title="View all saved critiques and chats in History">
+              History ({p.critiqueHistory.length}) →
+            </button>
+          </div>
+          {screenCritiques.length > 1 && (
+            <div className="chips" style={{ marginTop: 0, marginBottom: 8 }}>
+              {screenCritiques.map((c, idx) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  className={`vchip${activeCritique?.id === c.id ? " is-on" : ""}`}
+                  onClick={() => setSelectedCritiqueId(c.id)}
+                >
+                  #{screenCritiques.length - idx} · v{c.versionIndex + 1} · {c.report.overallScore}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="ux-dims">
+            <div className="ux-dim">
+              <span>Usability</span>
+              <b>{uxReport.dimensions.usability}</b>
+            </div>
+            <div className="ux-dim">
+              <span>Hierarchy</span>
+              <b>{uxReport.dimensions.hierarchy}</b>
+            </div>
+            <div className="ux-dim">
+              <span>Access.</span>
+              <b>{uxReport.dimensions.accessibility}</b>
+            </div>
+            <div className="ux-dim">
+              <span>Continuity</span>
+              <b>{uxReport.dimensions.continuity}</b>
+            </div>
+          </div>
+          <p className="muted small" style={{ margin: "6px 0 0" }}>
+            {uxReport.summary}
+          </p>
+          {uxReport.pins.length > 0 && (
+            <ul className="hist-pins" style={{ marginTop: 8 }}>
+              {uxReport.pins.map((pin, idx) => {
+                const tok = activeCritique?.pinTokens[idx];
+                return (
+                  <li key={idx}>
+                    {tok ? (
+                      <button type="button" className="note__tok" onClick={() => p.onMentionInChat(tok)}>
+                        {tok}
+                      </button>
+                    ) : (
+                      <code>{pin.kind}</code>
+                    )}
+                    {pin.componentId && <code className="muted">{pin.componentId}</code>}
+                    <span>{pin.text}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+      )}
+
       {versions.list.length > 1 && (
         <section className="block">
           <h3>
@@ -472,35 +555,6 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
               </button>
             </div>
           )}
-        </section>
-      )}
-
-      {uxReport && (
-        <section className="block">
-          <h3>
-            UX Critique <span className="badge badge--accent">{uxReport.overallScore}/100</span>
-          </h3>
-          <div className="ux-dims">
-            <div className="ux-dim">
-              <span>Usability</span>
-              <b>{uxReport.dimensions.usability}</b>
-            </div>
-            <div className="ux-dim">
-              <span>Hierarchy</span>
-              <b>{uxReport.dimensions.hierarchy}</b>
-            </div>
-            <div className="ux-dim">
-              <span>Access.</span>
-              <b>{uxReport.dimensions.accessibility}</b>
-            </div>
-            <div className="ux-dim">
-              <span>Continuity</span>
-              <b>{uxReport.dimensions.continuity}</b>
-            </div>
-          </div>
-          <p className="muted small" style={{ margin: "6px 0 0" }}>
-            {uxReport.summary}
-          </p>
         </section>
       )}
 

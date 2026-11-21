@@ -38,7 +38,7 @@ export interface ChatMsg {
   role: "user" | "assistant" | "system";
   text: string;
   at: number;
-  tone?: "edit" | "flag" | "error" | "info";
+  tone?: "edit" | "flag" | "critique" | "error" | "info";
   /** Component or @mention chips the message refers to. */
   chips?: string[];
   /** For edit cards: the version index it produced (to jump back to it). */
@@ -624,7 +624,7 @@ function Bubble({ m }: { m: ChatMsg }) {
 }
 
 function SystemCard({ m, onOpenVersion }: { m: ChatMsg; onOpenVersion: (i: number) => void }) {
-  const Icon = m.tone === "edit" ? IconSpark : m.tone === "flag" ? IconFlag : m.tone === "error" ? IconAlert : IconCheck;
+  const Icon = m.tone === "edit" || m.tone === "critique" ? IconSpark : m.tone === "flag" ? IconFlag : m.tone === "error" ? IconAlert : IconCheck;
   const [head, ...rest] = m.text.split("\n");
   return (
     <div className={`msg msg--system msg--${m.tone ?? "info"}`}>
@@ -632,6 +632,13 @@ function SystemCard({ m, onOpenVersion }: { m: ChatMsg; onOpenVersion: (i: numbe
       <div className="msg__body">
         <b>{head}</b>
         {rest.length > 0 && <span>{rest.join("\n")}</span>}
+        {m.chips && m.chips.length > 0 && (
+          <div className="msg__chips">
+            {m.chips.map((c) => (
+              <code key={c}>{c}</code>
+            ))}
+          </div>
+        )}
         {m.versionIndex !== undefined && (
           <button className="msg__link" onClick={() => onOpenVersion(m.versionIndex!)}>
             Show v{m.versionIndex + 1}
