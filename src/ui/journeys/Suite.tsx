@@ -14,7 +14,7 @@ const METRICS: { label: string; get: (s: SuiteSummary) => number | undefined; fm
     fmt: pct,
     title: "Share of applicable persona-contract checks that pass (rules + Gemini judge), e.g. totals for 4, stops labeled, exclusions stated",
   },
-  // hidden: { label: "Made-up facts on screen", get: (s) => s.failingChecks.grounding, fmt: (v) => String(v), lowerIsBetter: true },
+  // hidden: { label: "Not in fare datas on screen", get: (s) => s.failingChecks.grounding, fmt: (v) => String(v), lowerIsBetter: true },
   { label: "Goal met", get: (s) => s.goalRate, fmt: pct },
   // hidden for demo:   { label: "Turns on pinned UI", get: (s) => s.pinnedShare, fmt: pct },
 ];

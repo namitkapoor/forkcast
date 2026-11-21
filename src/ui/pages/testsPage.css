@@ -174,3 +174,11 @@
   .tp-avatar { width: 28px; height: 28px; }
   .tp-mx-person { white-space: normal; }
 }
+
+/* Persona matrix drill-down: cells and rows open the persona flow. */
+.tp-cell--none { cursor: default; }
+.tp-cell.is-link { cursor: pointer; }
+.tp-cell.is-link:hover { box-shadow: 0 0 0 2px var(--accent); }
+.tp-mx-person.is-link { cursor: pointer; border-radius: 10px; margin-left: -6px; padding-left: 6px; transition: background-color 100ms ease, box-shadow 100ms ease; }
+.tp-mx-person.is-link:hover { background: var(--surface-2); box-shadow: 0 0 0 1px var(--border-strong); }
+.tp-mx-person.is-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

@@ -1,0 +1,81 @@
+/* Persona flow: Tests matrix cell → the journey that persona went through, and why it failed. */
+.pf { padding-top: 16px; display: flex; flex-direction: column; gap: 14px; }
+
+.pf-head { display: flex; flex-direction: column; gap: 8px; }
+.pf-head__row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pf-avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: var(--surface-2); flex: none; }
+.pf-who { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pf-name { font: 600 16px/1.2 var(--sans); color: var(--text); }
+.pf-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.pf-tag { padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--text-2); font-size: 11.5px; }
+.pf-head__end { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.pf-seg { margin-right: 0; }
+.pf-badge { padding: 4px 10px; border-radius: 8px; background: var(--surface-2); font-size: 12px; font-weight: 600; }
+.pf-canvas { height: 28px; padding: 0 12px; font-size: 12px; }
+.pf-query { font-size: 13px; color: var(--text); }
+.pf-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.pf-pill { all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 999px; background: var(--surface); color: var(--text-2); font-size: 12px; box-shadow: inset 0 0 0 1px var(--border); white-space: nowrap; }
+.pf-pill:hover { background: var(--surface-2); color: var(--text); }
+.pf-pill.is-on { background: var(--panel-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-strong); font-weight: 600; }
+.pf-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* The flow strip */
+.pf-strip { display: flex; align-items: stretch; gap: 6px; overflow-x: auto; padding: 12px; background: var(--panel); border-radius: 16px; overscroll-behavior-x: contain; }
+.pf-arrow { flex: none; align-self: center; color: var(--text-3); display: inline-flex; }
+.pf-turn { all: unset; box-sizing: border-box; cursor: pointer; flex: none; width: 152px; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px; border-radius: 14px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); transition: background var(--t) var(--ease), box-shadow var(--t) var(--ease); }
+.pf-turn:hover { background: var(--surface-2); }
+.pf-turn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pf-turn.is-on { background: var(--panel-2); box-shadow: inset 0 0 0 2px var(--accent); }
+.pf-turn__top { align-self: stretch; display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.pf-intent { padding: 2px 8px; border-radius: 999px; background: var(--surface-3); color: var(--text); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.pf-status { font-size: 11px; font-weight: 600; white-space: nowrap; }
+.pf-status.is-bad { color: var(--bad); }
+.pf-status.is-ok { color: var(--ok); }
+.pf-thumb { display: block; border-radius: 16px; padding: 3px; pointer-events: none; }
+.pf-turn.is-ok .pf-thumb { box-shadow: 0 0 0 2px var(--ok); }
+.pf-turn.is-bad .pf-thumb { box-shadow: 0 0 0 2px var(--bad), 0 0 0 6px var(--bad-soft); }
+.pf-thumb .jr-circle__tag { display: none; }
+.pf-action { align-self: stretch; padding: 5px 8px; border-radius: 10px 10px 10px 3px; background: var(--accent-soft); color: var(--text); font-size: 11.5px; line-height: 1.35; text-align: left; overflow-wrap: anywhere; }
+.pf-outcome { flex: none; align-self: center; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 12px; border-radius: 12px; font-weight: 600; font-size: 12.5px; }
+.pf-outcome.is-ok { background: var(--ok-soft); color: var(--ok); }
+.pf-outcome.is-bad { background: var(--bad-soft); color: var(--bad); }
+
+/* Why it failed */
+.pf-why { padding: 12px 14px; border-radius: var(--r2); border: 1px solid transparent; }
+.pf-why.is-bad { background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 55%, transparent); }
+.pf-why.is-warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+.pf-why.is-ok { background: var(--ok-soft); }
+.pf-why__h { margin: 0 0 8px; font: 600 14px/1.3 var(--sans); }
+.pf-why.is-bad .pf-why__h { color: var(--bad); }
+.pf-why.is-warn .pf-why__h { color: var(--warn); }
+.pf-why.is-ok .pf-why__h { color: var(--ok); margin: 0 0 4px; }
+.pf-why__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 1.45; }
+.pf-why__list li { display: flex; gap: 10px; align-items: baseline; }
+.pf-why__list b { font-weight: 600; }
+.pf-why__list li.is-bad b { color: var(--bad); }
+.pf-why__list li.is-warn b { color: var(--warn); }
+.pf-why__tag { flex: none; width: 104px; font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.03em; }
+
+/* The strip replaces JourneyView's turn rail here. */
+.pf .jr-rail { display: none; }
+.pf .jr-journey { padding-top: 0; }
+.pf .jr-l3 { grid-template-columns: minmax(200px, 0.8fr) minmax(280px, 1.2fr) 360px; }
+@media (max-width: 1180px) {
+  .pf .jr-l3 { grid-template-columns: minmax(0, 1fr) 360px; }
+  .pf .jr-screen { grid-row: 1 / span 2; }
+}
+@media (max-width: 760px) {
+  .pf .jr-l3 { grid-template-columns: minmax(0, 1fr); }
+  .pf .jr-screen { grid-row: auto; }
+  .pf-head__end { margin-left: 0; width: 100%; justify-content: space-between; }
+  .pf-why__list li { flex-direction: column; gap: 2px; }
+  .pf-why__tag { width: auto; }
+}
+
+/* Canvas → back to the persona flow */
+.pf-return { position: fixed; top: 68px; left: 50%; transform: translateX(-50%); z-index: 30; height: 30px; padding: 0 14px; font-size: 12px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4); }
+@media (max-width: 760px) {
+  .pf-pills { flex-wrap: nowrap; overflow-x: auto; margin: 0 -12px; padding: 0 12px 2px; scrollbar-width: none; }
+  .pf-pill { flex: none; }
+}
+.pf-thumb .jr-circled { overflow: hidden; border-radius: 14px; }

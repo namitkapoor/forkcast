@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { edgeKey, type Context } from "../../graph/types";
 import { INTENTS, type Intent, type JourneysFile, type Persona } from "../../journeys/types";
 import { buildIntentGraph } from "../../journeys/aggregate";
@@ -51,7 +51,7 @@ function relTime(ms: number): string {
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 export function TestsPage(p: TestsPageProps) {
-  const { graph, traces, invariants, report, cov, lastRun, onRunTests, onOpenEdge, onOpenNode, onReplay } = p;
+  const { graph, traces, invariants, report, cov, lastRun, onRunTests, onOpenEdge, onOpenNode, onReplay, onOpenPersona } = p;
 
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -160,7 +160,7 @@ export function TestsPage(p: TestsPageProps) {
         </div>
       </header>
 
-      <PersonaMatrix />
+      <PersonaMatrix onOpen={onOpenPersona} />
 
       <section className="tp-card">
         <div className="tp-card-head">
@@ -317,9 +317,18 @@ function cellsFor(f: JourneysFile | null): Map<string, Cell> {
 }
 
 /** The three personas × the intents their journeys reached: does each screen fit the person? */
-function PersonaMatrix() {
+function PersonaMatrix({ onOpen }: { onOpen?: (mode: HeroMode, personaId: string, intent: Intent) => void }) {
   const [files, setFiles] = useState<{ checked: JourneysFile | null; naive: JourneysFile | null } | null>(null);
-  const [mode, setMode] = useState<HeroMode>("checked");
+  // `#tests/generic` keeps the switch on Generic when coming back from a persona flow.
+  const [mode, setModeState] = useState<HeroMode>(() => (typeof window !== "undefined" && window.location.hash.startsWith("#tests/generic") ? "naive" : "checked"));
+  const setMode = (m: HeroMode) => {
+    setModeState(m);
+    try {
+      if (window.location.hash.startsWith("#tests")) window.history.replaceState(null, "", m === "naive" ? "#tests/generic" : "#tests");
+    } catch {
+      /* ignore */
+    }
+  };
   useEffect(() => {
     let live = true;
     Promise.all([loadJourneys(), loadNaiveJourneys()]).then(([c, n]) => {
@@ -343,6 +352,17 @@ function PersonaMatrix() {
     return seen.sort((a, b) => rank(a) - rank(b));
   }, [checked, naive]);
   const cells = useMemo(() => cellsFor(shown), [shown]);
+  const dataMode: HeroMode = mode === "naive" && naive ? "naive" : "checked";
+  const open = (personaId: string, intent: Intent) => onOpen?.(dataMode, personaId, intent);
+  /** A persona row opens its worst intent: the first red cell, else the first visited one. */
+  const rowIntent = (personaId: string) =>
+    intents.find((it) => cells.get(`${personaId}|${it}`)?.misfit) ?? intents.find((it) => cells.has(`${personaId}|${it}`));
+  const onKey = (fn: () => void) => (e: KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      fn();
+    }
+  };
 
   return (
     <section className="tp-card" data-persona-matrix>
@@ -393,7 +413,18 @@ function PersonaMatrix() {
                 return (
                   <tr key={p.id} data-persona={p.id}>
                     <th className="tp-mx-row" scope="row">
-                      <div className="tp-mx-person">
+                      <div
+                        className={`tp-mx-person${onOpen && rowIntent(p.id) ? " is-link" : ""}`}
+                        {...(onOpen && rowIntent(p.id)
+                          ? {
+                              role: "button",
+                              tabIndex: 0,
+                              title: `Open ${callName(p)}’s flow`,
+                              onClick: () => open(p.id, rowIntent(p.id)!),
+                              onKeyDown: onKey(() => open(p.id, rowIntent(p.id)!)),
+                            }
+                          : {})}
+                      >
                       {p.photo ? <img className="tp-avatar" src={p.photo} alt="" width={36} height={36} /> : <span className="tp-avatar" />}
                       <span className="tp-person">
                         <span className="tp-person-name">{p.name ?? laneName(p)}</span>
@@ -424,7 +455,16 @@ function PersonaMatrix() {
                         : `${callName(p)} · ${cap(it)}: all ${c.turns} screen${c.turns === 1 ? "" : "s"} fit`;
                       return (
                         <td key={it}>
-                          <span className={`tp-cell tp-cell--${state} tp-cell--wide`} title={tip} aria-label={tip} role="img" tabIndex={0}>
+                          <span
+                            className={`tp-cell tp-cell--${state} tp-cell--wide${c && onOpen ? " is-link" : ""}`}
+                            title={c && onOpen ? `${tip} — click to see the flow` : tip}
+                            aria-label={tip}
+                            role={c && onOpen ? "button" : "img"}
+                            tabIndex={0}
+                            data-cell={`${p.id}|${it}`}
+                            onClick={c && onOpen ? () => open(p.id, it) : undefined}
+                            onKeyDown={c && onOpen ? onKey(() => open(p.id, it)) : undefined}
+                          >
                             {c?.misfit ? c.misfit : null}
                           </span>
                         </td>

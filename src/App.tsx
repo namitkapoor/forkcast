@@ -20,6 +20,7 @@ import { Chat, type ChatMsg } from "./ui/Chat";
 import { Layers } from "./ui/Layers";
 import { TestsPage } from "./ui/pages/TestsPage";
 import { JourneysPage } from "./ui/journeys/JourneysPage";
+import { PersonaFlow, drillFromHash, drillHash, type Drill } from "./ui/flows/PersonaFlow";
 import { loadJourneys, suiteStats } from "./ui/journeys/data";
 import { Dock, HelpOverlay, Toolbar, TopBar, Toasts, type Page, type Toast } from "./ui/Chrome";
 import { IconChat, IconLayers, IconPanel } from "./ui/icons";
@@ -51,7 +52,7 @@ interface Snapshot {
 // Journeys is the default page (no hash); Flow and Tests keep their own hash.
 const pageFromHash = (): Page => {
   const h = typeof window !== "undefined" ? window.location.hash : "";
-  return h === "#tests" ? "tests" : h === "#flow" ? "flow" : "journeys";
+  return h.startsWith("#tests") ? "tests" : h.startsWith("#flow") ? "flow" : "journeys";
 };
 const uid = (p: string) => `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
@@ -73,6 +74,9 @@ function Shell() {
   const [playTraffic, setPlayTraffic] = useState(false);
   const [replay, setReplay] = useState<ReplayState | null>(null);
   const [page, setPageState] = useState<Page>(pageFromHash);
+  // Tests matrix → Flows: the persona flow view (hash #flow/<generic|persona>/<personaId>/<intent>).
+  const [drill, setDrill] = useState<Drill | null>(() => (typeof window !== "undefined" ? drillFromHash(window.location.hash) : null));
+  const [flowView, setFlowView] = useState<"persona" | "canvas">("persona");
   const [leftTab, setLeftTab] = useState<"chat" | "layers" | "props">("chat");
   const [chats, setChats] = useState<Record<string, ChatMsg[]>>({});
   const [busy, setBusy] = useState<{ key: string; label: string; startedAt: number } | null>(null);
@@ -119,18 +123,40 @@ function Shell() {
   }, []);
 
   useEffect(() => {
-    const on = () => setPageState(pageFromHash());
+    const on = () => {
+      setPageState(pageFromHash());
+      const d = drillFromHash(window.location.hash);
+      if (d) {
+        setDrill(d);
+        setFlowView("persona");
+      }
+    };
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);
   const setPage = useCallback((p: Page) => {
     setPageState(p);
     try {
-      window.history.replaceState(null, "", p === "journeys" ? window.location.pathname + window.location.search : `#${p}`);
+      const h = window.location.hash;
+      const keep = (p === "tests" && h.startsWith("#tests/")) || (p === "flow" && h.startsWith("#flow/"));
+      if (!keep) window.history.replaceState(null, "", p === "journeys" ? window.location.pathname + window.location.search : `#${p}`);
     } catch {
       /* ignore */
     }
   }, []);
+
+  const openDrill = useCallback((d: Drill) => {
+    setDrill(d);
+    setFlowView("persona");
+    setPageState("flow");
+    try {
+      window.history.replaceState(null, "", drillHash(d));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const personaView = page === "flow" && !!drill && flowView === "persona";
+  const canvasOn = page === "flow" && !personaView;
 
   const toast = useCallback((t: Omit<Toast, "id">) => {
     const id = ++toastId.current;
@@ -760,7 +786,7 @@ function Shell() {
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const k = e.key;
-      if (k === " " && page === "flow") {
+      if (k === " " && canvasOn) {
         setSpaceHeld(true);
         e.preventDefault();
         return;
@@ -774,7 +800,7 @@ function Shell() {
         return;
       }
       if (help && k !== "?") return;
-      if (page !== "flow") return;
+      if (!canvasOn) return;
       const map: Record<string, Tool> = { v: "select", h: "hand", l: "lasso", c: "annotate", a: "annotate", b: "branch" };
       if (map[k.toLowerCase()] && !e.shiftKey) return onToolChange(map[k.toLowerCase()]);
       if (k === "t" || k === "T") return setPlayTraffic((v) => !v);
@@ -806,7 +832,7 @@ function Shell() {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
-  }, [help, draft, picks, replay, page, clear, zoomIn, zoomOut, rf, fit, selection, focusNodes, focusScreen, focusEdge, rerun, derived, focusNode, onToolChange, undo, redo]);
+  }, [help, draft, picks, replay, page, canvasOn, clear, zoomIn, zoomOut, rf, fit, selection, focusNodes, focusScreen, focusEdge, rerun, derived, focusNode, onToolChange, undo, redo]);
 
   // ---- React Flow elements ----
   const nodes = useMemo<SectionFlowNode[]>(() => {
@@ -963,7 +989,7 @@ function Shell() {
         onClearPicks: () => setPicksState(null),
       }
     : null;
-  const rightVisible = !!propsProps && page === "flow" && (!!replay || selection.kind !== "none");
+  const rightVisible = !!propsProps && canvasOn && (!!replay || selection.kind !== "none");
   rightOpen.current = rightVisible;
 
   const ctx = (() => {
@@ -1027,7 +1053,7 @@ function Shell() {
           menuItems={menuItems}
         />
 
-        {derived && page === "flow" && (
+        {derived && canvasOn && (
           <aside className={`lpanel floating${collapsed ? " is-collapsed" : ""}`} aria-label="Chat and layers">
             <header className="lpanel__head">
               <button className="icon-btn" onClick={() => setCollapsed((c) => !c)} aria-label={collapsed ? "Expand panel" : "Collapse panel"} title="Toggle panel ( \ )">
@@ -1096,7 +1122,31 @@ function Shell() {
 
         {rightVisible && propsProps && <RightPanel {...propsProps} />}
 
-        {page === "flow" && (
+        {canvasOn && drill && (
+          <button className="btn pf-return" onClick={() => setFlowView("persona")} title="Back to the persona flow" data-persona-return>
+            ← Persona flow
+          </button>
+        )}
+
+        {personaView && drill && (
+          <main className="page">
+            <PersonaFlow
+              drill={drill}
+              onDrill={openDrill}
+              onCanvas={() => setFlowView("canvas")}
+              onBack={(mode) => {
+                setPageState("tests");
+                try {
+                  window.history.replaceState(null, "", mode === "naive" ? "#tests/generic" : "#tests");
+                } catch {
+                  /* ignore */
+                }
+              }}
+            />
+          </main>
+        )}
+
+        {canvasOn && (
           <>
             <Toolbar tool={spaceHeld ? "hand" : tool} onTool={onToolChange} />
             <Dock canUndo={undoStack.length > 0} canRedo={redoStack.length > 0} onUndo={undo} onRedo={redo} onIn={zoomIn} onOut={zoomOut} onFit={fit} onHelp={() => setHelp(true)} />
@@ -1120,6 +1170,7 @@ function Shell() {
               cov={derived.cov}
               lastRun={lastRun}
               onRunTests={runTests}
+              onOpenPersona={(mode, personaId, intent) => openDrill({ mode, personaId, intent })}
               onOpenEdge={(k) => {
                 setPage("flow");
                 window.setTimeout(() => focusEdge(k), 0);
