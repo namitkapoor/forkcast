@@ -36,12 +36,16 @@ export interface TopBarProps {
   onHelp: () => void;
   onTogglePanel: () => void;
   onClearNotes: () => void;
-  /** Extra menu items (data source, seeded bug). */
+  /** Journeys page only: a quiet provenance badge on the right ("Real Gemini run"). */
+  badge?: string;
+  badgeTitle?: string;
+  /** Extra menu items (data source, seeded bug). Shown on the Advanced pages only. */
   menuItems?: { label: string; fn: () => void }[];
 }
 
 export function TopBar(p: TopBarProps) {
   const [menu, setMenu] = useState(false);
+  const advanced = p.page !== "journeys";
 
   useEffect(() => {
     if (!menu) return;
@@ -60,7 +64,7 @@ export function TopBar(p: TopBarProps) {
       }}
     >
       <span>{label}</span>
-      <span className="kbd">{kbd}</span>
+      {kbd && <span className="kbd">{kbd}</span>}
     </button>
   );
 
@@ -73,12 +77,21 @@ export function TopBar(p: TopBarProps) {
           </button>
           {menu && (
             <div className="menu" role="menu">
-              {item("Fit whole flow", "⇧1", p.onFit)}
-              {item("Toggle left panel", "\\", p.onTogglePanel)}
-              {item("Keyboard shortcuts", "?", p.onHelp)}
-              <hr />
-              {p.menuItems?.map((m) => <Fragment key={m.label}>{item(m.label, "", m.fn)}</Fragment>)}
-              {item("Clear my annotations", "", p.onClearNotes)}
+              {advanced ? (
+                <>
+                  {item("Back to journeys", "", () => p.onPage("journeys"))}
+                  <hr />
+                  {p.page === "flow" && item("Fit whole flow", "⇧1", p.onFit)}
+                  {p.page === "flow" && item("Toggle left panel", "\\", p.onTogglePanel)}
+                  {item("Keyboard shortcuts", "?", p.onHelp)}
+                  {p.menuItems?.map((m) => <Fragment key={m.label}>{item(m.label, "", m.fn)}</Fragment>)}
+                  {item("Clear my annotations", "", p.onClearNotes)}
+                  <hr />
+                </>
+              ) : null}
+              <div className="menu__label">Advanced</div>
+              {item(p.page === "flow" ? "Flow canvas ✓" : "Flow canvas", "", () => p.onPage("flow"))}
+              {item(p.page === "tests" ? "Invariant tests ✓" : "Invariant tests", "", () => p.onPage("tests"))}
             </div>
           )}
         </div>
@@ -89,15 +102,24 @@ export function TopBar(p: TopBarProps) {
         </div>
       </div>
 
-      <nav className="pages seg" aria-label="Pages">
-        {(["journeys", "flow", "tests"] as const).map((id) => (
-          <button key={id} className={p.page === id ? "is-on" : ""} aria-current={p.page === id ? "page" : undefined} onClick={() => p.onPage(id)}>
-            {id === "journeys" ? "Journeys" : id === "flow" ? "Flow" : "Tests"}
+      <div className="topbar__mid">
+        {advanced && (
+          <button className="btn btn--ghost" onClick={() => p.onPage("journeys")} title="Back to the journeys page">
+            ← Journeys
           </button>
-        ))}
-      </nav>
+        )}
+      </div>
 
       <div className="topbar__right">
+        {!advanced ? (
+          p.badge && (
+            <span className="tb-badge" title={p.badgeTitle}>
+              <span className="dot dot--pass" aria-hidden="true" />
+              <span className="tb-label">{p.badge}</span>
+            </span>
+          )
+        ) : (
+          <>
         <button
           className={`switch${p.playTraffic ? " is-on" : ""}`}
           role="switch"
@@ -120,6 +142,8 @@ export function TopBar(p: TopBarProps) {
           <IconDownload width={14} height={14} />
           <span className="tb-label">Export</span>
         </button>
+          </>
+        )}
       </div>
     </header>
   );

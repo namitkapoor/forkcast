@@ -1,30 +1,37 @@
 import { useCallback, useEffect, useState } from "react";
-import { loadJourneys, shortPersona, truncate, type LoadedJourneys } from "./data";
+import { loadHeroJourneys, loadJourneys, shortPersona, sortQueries, truncate, type LoadedJourneys } from "./data";
 import { Suite } from "./Suite";
-import { QueryLanes } from "./QueryLanes";
 import { JourneyView } from "./JourneyView";
 import { IconBack } from "./icons";
 import "./journeys.css";
 
-type Nav = { level: 1 } | { level: 2; queryId: string; focus?: string } | { level: 3; queryId: string; personaId: string; run: number; turn: number };
+import type { JourneysFile } from "../../journeys/types";
+
+/** `fromHero`: the journey comes from the hero's (unpinned) file, not journeys.json. */
+type Nav = { level: 1 } | { level: 3; queryId: string; personaId: string; run: number; turn: number; fromHero: boolean };
 
 export function JourneysPage() {
   const [data, setData] = useState<LoadedJourneys | null | "loading">("loading");
+  const [unpinned, setUnpinned] = useState<JourneysFile | null>(null);
   const [nav, setNav] = useState<Nav>({ level: 1 });
-  // Run picked per (query, persona) in L2; survives going down to L3 and back.
-  const [runs, setRuns] = useState<Record<string, Record<string, number>>>({});
+  // Hero state lives here so coming back from a journey lands where you left.
+  const [heroQuery, setHeroQuery] = useState<string | null>(null);
+  const [heroTurn, setHeroTurn] = useState(0);
 
   useEffect(() => {
     let live = true;
-    loadJourneys().then((d) => live && setData(d));
+    // The hero waits for both so it never flips from pinned to unpinned screens mid-view.
+    Promise.all([loadJourneys(), loadHeroJourneys()]).then(([d, u]) => {
+      if (!live) return;
+      setUnpinned(u);
+      setData(d);
+    });
     return () => {
       live = false;
     };
   }, []);
 
-  const up = useCallback(() => {
-    setNav((n) => (n.level === 3 ? { level: 2, queryId: n.queryId, focus: n.personaId } : { level: 1 }));
-  }, []);
+  const up = useCallback(() => setNav({ level: 1 }), []);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -41,7 +48,7 @@ export function JourneysPage() {
   // Each level starts at the top.
   useEffect(() => {
     document.querySelector(".page")?.scrollTo({ top: 0 });
-  }, [nav.level, nav.level !== 1 ? nav.queryId : ""]);
+  }, [nav.level]);
 
   if (data === "loading") {
     return (
@@ -52,66 +59,59 @@ export function JourneysPage() {
   }
   if (!data) return <div className="page-stub">No journeys found. Expected /data/journeys.json or /data/journeys.sample.json.</div>;
 
-  const { file, sample } = data;
-  const q = nav.level !== 1 ? file.queries.find((x) => x.id === nav.queryId) : undefined;
-  const p = nav.level === 3 ? file.personas.find((x) => x.id === nav.personaId) : undefined;
-  const journey = nav.level === 3 ? file.journeys.find((j) => j.queryId === nav.queryId && j.personaId === nav.personaId && j.run === nav.run) : undefined;
+  const { file } = data;
+  const heroFile = unpinned ?? file;
+  const queryId = heroQuery ?? sortQueries(heroFile.queries)[0]?.id ?? "";
 
-  const crumbs: { label: string; go?: () => void }[] = [{ label: "Suite", go: nav.level > 1 ? () => setNav({ level: 1 }) : undefined }];
-  if (nav.level >= 2 && q) crumbs.push({ label: truncate(q.text, 30), go: nav.level === 3 ? up : undefined });
-  if (nav.level === 3) crumbs.push({ label: `${shortPersona(p)} · run ${nav.run + 1}` });
+  if (nav.level === 1) {
+    return (
+      <div className="jr jr--l1">
+        <Suite
+          file={file}
+          heroFile={heroFile}
+          queryId={queryId}
+          turn={heroTurn}
+          onQuery={setHeroQuery}
+          onTurn={setHeroTurn}
+          onOpen={(q, personaId, run, turn) => setNav({ level: 3, queryId: q, personaId, run, turn, fromHero: true })}
+        />
+      </div>
+    );
+  }
+
+  const src = nav.fromHero ? heroFile : file;
+  const q = src.queries.find((x) => x.id === nav.queryId);
+  const p = src.personas.find((x) => x.id === nav.personaId);
+  const journey = src.journeys.find((j) => j.queryId === nav.queryId && j.personaId === nav.personaId && j.run === nav.run);
 
   return (
-    <div className={`jr jr--l${nav.level}`}>
+    <div className="jr jr--l3">
       <div className="jr-bar">
-        {nav.level > 1 && (
-          <button className="icon-btn icon-btn--sm" onClick={up} aria-label="Up one level (Esc)" title="Up one level (Esc)">
-            <IconBack width={15} height={15} />
-          </button>
-        )}
+        <button className="icon-btn icon-btn--sm" onClick={up} aria-label="Back (Esc)" title="Back (Esc)">
+          <IconBack width={15} height={15} />
+        </button>
         <nav className="jr-crumbs" aria-label="Breadcrumbs">
-          {crumbs.map((c, i) => (
-            <span key={i} className="jr-crumb">
-              {i > 0 && <span className="jr-crumbs__sep">›</span>}
-              {c.go ? (
-                <button onClick={c.go}>{c.label}</button>
-              ) : (
-                <span aria-current="page" title={i === 1 ? q?.text : undefined}>
-                  {c.label}
-                </span>
-              )}
-            </span>
-          ))}
-        </nav>
-        <span className="jr-bar__right">
-          {sample && (
-            <span className="badge badge--accent" title="public/data/journeys.json not found; showing the hand-built sample" data-sample>
-              sample data
-            </span>
-          )}
-          <span className="muted small jr-bar__meta">
-            {file.journeys.length} journeys · {new Date(file.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+          <span className="jr-crumb">
+            <button onClick={up}>Three travelers</button>
           </span>
-        </span>
+          <span className="jr-crumb jr-crumb--q">
+            <span className="jr-crumbs__sep">›</span>
+            <button onClick={up} title={q?.text}>
+              “{truncate(q?.text ?? nav.queryId, 44)}”
+            </button>
+          </span>
+          <span className="jr-crumb">
+            <span className="jr-crumbs__sep">›</span>
+            {p?.photo && <img className="avatar avatar--crumb" src={p.photo} alt="" width={18} height={18} />}
+            <span aria-current="page">{shortPersona(p)}</span>
+          </span>
+        </nav>
       </div>
-
-      {nav.level === 1 && <Suite file={file} onOpen={(queryId, personaId) => setNav({ level: 2, queryId, focus: personaId })} />}
-      {nav.level === 2 && (
-        <QueryLanes
-          file={file}
-          queryId={nav.queryId}
-          runs={runs[nav.queryId] ?? {}}
-          focusPersona={nav.focus}
-          onRun={(personaId, run) => setRuns((r) => ({ ...r, [nav.queryId]: { ...r[nav.queryId], [personaId]: run } }))}
-          onOpenTurn={(personaId, run, turn) => setNav({ level: 3, queryId: nav.queryId, personaId, run, turn })}
-        />
+      {journey ? (
+        <JourneyView file={src} journey={journey} turn={nav.turn} onTurn={(turn) => setNav({ ...nav, turn })} />
+      ) : (
+        <div className="page-stub">Journey not found.</div>
       )}
-      {nav.level === 3 &&
-        (journey ? (
-          <JourneyView file={file} journey={journey} turn={nav.turn} onTurn={(turn) => setNav({ ...nav, turn })} />
-        ) : (
-          <div className="page-stub">Journey not found.</div>
-        ))}
     </div>
   );
 }

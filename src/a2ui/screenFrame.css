@@ -189,3 +189,14 @@
 .fc-pin--rule {
   background: #e19a12;
 }
+
+/* Bare: a screen embedded in a chat bubble. Height follows content; no device chrome. */
+.fc-phone--bare {
+  border-radius: 14px;
+  box-shadow: 0 0 0 1px #e3e5e9;
+}
+.fc-phone--bare .fc-phone__content {
+  flex: none;
+  overflow: visible;
+  padding: 12px 16px 16px;
+}

@@ -5,18 +5,27 @@ import type { Persona, Query } from "./types";
 export const PERSONAS: Persona[] = [
   {
     id: "family",
+    name: "The Okafor family",
+    photo: "/personas/family.png",
+    memory: "Traveling with 2 kids (6 and 9) · must sit together · 4 checked bags",
     label: "Family of 4 · phone · EUR",
     context: { party: "family", pax: "4", surface: "inline", currency: "EUR", origin: "LHR" },
     style: "Parent booking for two adults and two kids. Cares about the total price and sitting together. Short messages typed on a phone.",
   },
   {
     id: "solo",
+    name: "Maya Chen",
+    photo: "/personas/solo.png",
+    memory: "Prefers nonstop · lands before meetings · flexible fares · airline status",
     label: "Solo business · desktop · USD",
     context: { party: "solo", pax: "1", surface: "fullscreen", currency: "USD", origin: "JFK" },
     style: "Business traveler. Wants a nonstop and a sensible arrival time, decides fast, rarely browses.",
   },
   {
     id: "budget-couple",
+    name: "Sam & Priya",
+    photo: "/personas/budget-couple.png",
+    memory: "Flexible dates · carry-on only · wary of add-on fees",
     label: "Budget couple · phone · GBP",
     context: { party: "couple", pax: "2", surface: "inline", currency: "GBP", origin: "MAN" },
     style: "Couple on a tight budget. Will trade convenience for price, asks follow-up questions, may give up if extras pile on.",

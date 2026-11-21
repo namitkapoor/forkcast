@@ -12,12 +12,14 @@ interface Props {
   failing: CheckResult[];
   /** Show the value tag next to each circle (off for small thumbs). */
   tags?: boolean;
+  /** Embed without device chrome (chat bubble). */
+  bare?: boolean;
 }
 
 type Circle = Rect & { key: string; label: string };
 
 /** A ScreenFrame with a red outline on every component a failing check points at. */
-export function CircledScreen({ screen, width, mode = "thumb", failing, tags = true }: Props) {
+export function CircledScreen({ screen, width, mode = "thumb", failing, tags = true, bare = false }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [circles, setCircles] = useState<Circle[]>([]);
   const targets = failing.filter((c) => c.componentId);
@@ -48,11 +50,11 @@ export function CircledScreen({ screen, width, mode = "thumb", failing, tags = t
       ro.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [screen.id, key, width]);
+  }, [screen.id, key, width, bare]);
 
   return (
     <div className="jr-circled" ref={ref} style={{ width }}>
-      <ScreenFrame screen={screen} width={width} mode={mode} />
+      <ScreenFrame screen={screen} width={width} mode={mode} bare={bare} />
       {circles.map((c) => (
         <div
           key={c.key}

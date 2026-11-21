@@ -5,7 +5,7 @@ import type { Journey, Persona } from "../../journeys/types";
 import type { IntentGraph } from "./agg";
 import { IconPerson } from "../icons";
 import { IconLock } from "./icons";
-import { cap, pct, shortPersona, tone } from "./data";
+import { cap, laneName, pct, tone } from "./data";
 
 type IntentData = { kind: "intent"; title: string; count: number; lanes: { label: string; count: number; passRate: number; pinned: boolean }[] } | { kind: "terminal"; title: string };
 type IntentNode = Node<IntentData, "intent">;
@@ -162,7 +162,7 @@ export function IntentTree({ graph, personas, journeys }: { graph: IntentGraph; 
         position: pos.get(n.intent)!,
         draggable: false,
         selectable: false,
-        data: { kind: "intent", title: cap(n.intent), count: n.count, lanes: n.lanes.map((l) => ({ label: shortPersona(byId.get(l.personaId)), count: l.count, passRate: l.passRate, pinned: l.pinned })) },
+        data: { kind: "intent", title: cap(n.intent), count: n.count, lanes: n.lanes.map((l) => ({ label: laneName(byId.get(l.personaId)), count: l.count, passRate: l.passRate, pinned: l.pinned })) },
       })),
       { id: "end", type: "intent", position: { x: lastCol * COL, y: ANCHOR_Y - 13 }, data: { kind: "terminal", title: "End" }, draggable: false, selectable: false },
     ];

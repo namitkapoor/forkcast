@@ -1,4 +1,4 @@
-import { Component, useCallback, useEffect, useMemo, useRef, type ErrorInfo, type MouseEvent, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ErrorInfo, type MouseEvent, type ReactNode } from "react";
 import { A2uiSurface, MarkdownContext, type ReactCatalogComponent } from "@a2ui/react/v0_9";
 import { MessageProcessor, type SurfaceModel } from "@a2ui/web_core/v0_9";
 import { basicCatalog } from "@a2ui/web_core/v0_9/basic_catalog";
@@ -24,6 +24,8 @@ export interface ScreenFrameProps {
   onComponentClick?: (componentId: string, rel: { x: number; y: number }, mods: { shiftKey: boolean }) => void;
   /** Live mode only: clicks pick a component (onComponentClick) instead of triggering actions. */
   annotate?: boolean;
+  /** No device chrome (status bar, home bar) and height follows the content: for embedding a screen in a chat bubble. */
+  bare?: boolean;
 }
 
 export const BASE_WIDTH = 360;
@@ -58,10 +60,23 @@ function prepare(screen: Screen, onAction: (a: ScreenAction) => void): Prepared 
   }
 }
 
-export function ScreenFrame({ screen, mode = "thumb", width = 240, onAction, onComponentClick, annotate = false }: ScreenFrameProps) {
+export function ScreenFrame({ screen, mode = "thumb", width = 240, onAction, onComponentClick, annotate = false, bare = false }: ScreenFrameProps) {
   const live = mode === "live";
   const scale = width / BASE_WIDTH;
-  const height = Math.round(width * ASPECT);
+  const innerRef = useRef<HTMLDivElement>(null);
+  const [contentH, setContentH] = useState<number | null>(null);
+  // Bare frames size to their content; transforms don't affect offsetHeight, so this is the unscaled height.
+  useLayoutEffect(() => {
+    if (!bare) return;
+    const el = innerRef.current;
+    if (!el) return;
+    const measure = () => setContentH(el.offsetHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [bare]);
+  const height = bare ? Math.round((contentH ?? BASE_HEIGHT * 0.5) * scale) : Math.round(width * ASPECT);
 
   // Latest callbacks/flags in refs so the processor isn't rebuilt when they change.
   const onActionRef = useRef(onAction);
@@ -101,18 +116,19 @@ export function ScreenFrame({ screen, mode = "thumb", width = 240, onAction, onC
   return (
     <div
       ref={frameRef}
-      className={`fc-phone fc-phone--${mode}${annotating ? " fc-phone--annotating" : ""}`}
-      style={{ width, height, borderRadius: radius }}
+      className={`fc-phone fc-phone--${mode}${bare ? " fc-phone--bare" : ""}${annotating ? " fc-phone--annotating" : ""}`}
+      style={{ width, height, borderRadius: bare ? undefined : radius }}
       onClickCapture={live ? onClickCapture : undefined}
       data-screen-id={screen.id}
     >
       <div
+        ref={innerRef}
         className="fc-phone__screen a2ui-light"
-        style={{ width: BASE_WIDTH, height: BASE_HEIGHT, transform: `scale(${scale})` }}
+        style={{ width: BASE_WIDTH, height: bare ? undefined : BASE_HEIGHT, transform: `scale(${scale})` }}
         inert={!live}
         aria-hidden={!live || undefined}
       >
-        <StatusBar />
+        {!bare && <StatusBar />}
         <div className="fc-phone__content">
           <FrameErrorBoundary key={`${screen.id}:${screen.messages.length}`} variant={screen.variant}>
             {prepared.errors.length > 0 || !prepared.surface ? (
@@ -124,7 +140,7 @@ export function ScreenFrame({ screen, mode = "thumb", width = 240, onAction, onC
             )}
           </FrameErrorBoundary>
         </div>
-        <div className="fc-phone__home" />
+        {!bare && <div className="fc-phone__home" />}
       </div>
 
       {screen.annotations.length > 0 && (

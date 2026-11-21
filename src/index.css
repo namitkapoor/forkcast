@@ -143,8 +143,9 @@ button.chip:hover { color: var(--text); background: var(--surface-3); }
 .file__mark::after { top: 9px; border-color: var(--accent); }
 .file__name { font-size: 13.5px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .file__sub { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pages { min-width: 0; }
-.pages button { padding: 0 14px; }
+.topbar__mid { display: flex; justify-content: center; min-width: 0; }
+.tb-badge { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 10px; border-radius: 99px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); color: var(--text-2); font-size: 12px; white-space: nowrap; }
+.menu__label { padding: 6px 10px 4px; font-size: 11px; font-weight: 500; color: var(--text-3); letter-spacing: 0.02em; text-transform: uppercase; }
 .topbar__right { display: flex; align-items: center; gap: 6px; justify-self: end; min-width: 0; }
 .switch { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px 0 8px; border: 0; border-radius: 10px; background: none; color: var(--text-2); cursor: pointer; font-size: 12.5px; font-weight: 500; white-space: nowrap; }
 .switch:hover { background: var(--surface-2); color: var(--text); }
@@ -553,23 +554,23 @@ button.fail:hover { background: var(--bad-soft); }
 
 /* ---------- small screens ---------- */
 @media (max-width: 760px) {
-  .topbar { height: 96px; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 48px 40px; gap: 0 8px; padding: 0 8px; align-items: center; }
-  .pages { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; }
+  .topbar { height: 52px; grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; padding: 0 8px; align-items: center; }
+  .topbar__mid, .tb-badge { display: none; }
   .topbar__right { grid-column: 2; grid-row: 1; gap: 2px; }
   .tb-label { display: none; }
   .switch { padding: 0 6px; }
   .file__sub { display: none; }
-  .page { top: 96px; }
+  .page { top: 52px; }
 
   .lpanel { top: auto; left: 8px; right: 8px; bottom: 8px; width: auto; height: 46vh; border-radius: 20px; }
   .lpanel.is-collapsed { right: auto; top: auto; bottom: 8px; height: auto; }
   .ptab--props { display: block; }
   .rpanel { display: none; }
-  .toolbar { top: 104px; bottom: auto; padding: 3px; border-radius: 13px; }
+  .toolbar { top: 60px; bottom: auto; padding: 3px; border-radius: 13px; }
   .tool { width: 32px; height: 32px; border-radius: 10px; }
   .tool__tip { display: none; }
   .dock { display: none; }
-  .toasts { bottom: auto; top: 150px; }
+  .toasts { bottom: auto; top: 106px; }
 }
 
 /* Library attribution: kept, but quiet. */
