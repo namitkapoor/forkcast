@@ -23,10 +23,11 @@ export const PROFILES: Record<string, TravelerProfile> = {
       "the total for all 4 travelers, and what each child's ticket costs",
       "checked bags for 4",
       "avoid very early departures with the kids (before 07:00 is hard)",
+      "open with a prominent family card right under the title: an Icon (person or group), bold \"4 seats together\" and one short line on bags and kids' fares, so seating visibly makes itself known; no long paragraphs",
     ],
     travelers: "2 adults, 2 children (6 and 9)",
     bags: "4 checked bags",
-    device: "phone: keep it compact",
+    device: "phone: compact cards, one fare per card, total for 4 large, per-child price small",
   },
   solo: {
     summary: "Business traveler flying alone; has airline status (frequent flyer, alliance elite).",

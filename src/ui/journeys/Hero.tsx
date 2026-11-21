@@ -86,7 +86,7 @@ export function Hero({ file, mode, onMode, queryId, turn, onQuery, onTurn, onOpe
       <header className="hero__head">
         <h1>Same question, three travelers</h1>
         <p className="muted">
-          Three synthetic travelers ask Getaway’s assistant the same question. Forkcast checks whether each screen fits the person who asked.
+          Synthetic travelers talk to Getaway’s assistant; it generates every screen; Forkcast runs QA on each turn. The UI converges per traveler, and the flow is derived from their interactions, not drawn up front.
         </p>
       </header>
 
