@@ -510,9 +510,10 @@ button.fail:hover { background: var(--bad-soft); }
   width: 100%; resize: none; padding: 7px 8px; border-radius: 8px; border: 0; box-shadow: inset 0 0 0 1px var(--border-strong); background: var(--bg);
   color: var(--text); font: 12.5px/1.4 var(--sans);
 }
-.composer__actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
-.composer__actions button { height: 26px; padding: 0 10px; border-radius: 99px; border: 0; background: var(--surface-2); cursor: pointer; font-size: 12px; color: var(--text-2); }
-.composer__actions button.is-primary { background: #f2f2f2; color: #131313; font-weight: 500; }
+.composer__actions { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-top: 8px; }
+.composer__actions-right { display: flex; gap: 6px; }
+.composer__actions-right button { height: 26px; padding: 0 10px; border-radius: 99px; border: 0; background: var(--surface-2); cursor: pointer; font-size: 12px; color: var(--text-2); }
+.composer__actions-right button.is-primary { background: #f2f2f2; color: #131313; font-weight: 500; }
 
 /* Wires: thin and neutral; red only when failing, dashed grey when untested. */
 .noodle path { fill: none; stroke-linecap: round; }
@@ -579,3 +580,46 @@ button.fail:hover { background: var(--bad-soft); }
 .scr.is-selected { box-shadow: 0 0 0 calc(3px * var(--inv, 1)) var(--accent); }
 .canvas--annotate .scr.is-live .fc-phone__screen, .canvas--annotate .scr.is-live .fc-phone__screen * { cursor: crosshair !important; }
 .composer--flip { transform-origin: top right !important; }
+
+/* ---------- voice-first controls ---------- */
+.voice-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 28px; padding: 0 10px; border: 0; border-radius: 99px; flex: none;
+  background: var(--accent-soft); color: var(--accent-2); cursor: pointer;
+  font-size: 12px; font-weight: 500; white-space: nowrap;
+  transition: background var(--t) var(--ease), color var(--t) var(--ease), box-shadow var(--t) var(--ease);
+}
+.voice-btn:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.voice-btn:disabled { opacity: 0.4; cursor: default; }
+.voice-btn--compact { width: 32px; height: 32px; padding: 0; border-radius: 10px; }
+.voice-btn.is-listening {
+  background: var(--bad); color: #fff;
+  box-shadow: 0 0 0 3px var(--bad-soft);
+}
+.voice-btn.is-listening:hover:not(:disabled) { background: #ff6961; color: #fff; }
+.voice-btn.is-unsupported { background: var(--surface-2); color: var(--text-3); }
+.voice-btn__pulse {
+  width: 8px; height: 8px; border-radius: 50%; flex: none; background: currentColor;
+  animation: voice-pulse 1.1s ease-in-out infinite;
+}
+@keyframes voice-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.75); }
+}
+
+.voice-feedback {
+  display: flex; align-items: center; gap: 6px; margin-top: 6px; padding: 5px 8px;
+  border-radius: 8px; font-size: 11.5px; line-height: 1.35;
+}
+.voice-feedback span:last-of-type { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.voice-feedback--live { background: var(--bad-soft); color: #ffb4ae; }
+.voice-feedback--transcribing { background: var(--accent-soft); color: var(--accent-2); }
+.voice-feedback--error { background: var(--bad-soft); color: var(--bad); }
+.voice-feedback__close {
+  display: inline-grid; place-items: center; width: 18px; height: 18px; flex: none;
+  border: 0; border-radius: 5px; background: none; color: inherit; cursor: pointer; padding: 0;
+}
+.voice-feedback__close:hover { background: rgba(255, 255, 255, 0.12); }
+
+.chat__composer.is-listening { box-shadow: inset 0 0 0 1.5px var(--bad); }
+.composer.is-listening { box-shadow: 0 0 0 1.5px var(--bad), 0 12px 32px rgba(0, 0, 0, 0.5); }

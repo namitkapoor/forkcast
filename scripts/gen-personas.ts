@@ -7,6 +7,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
 import { loadDotEnv } from "../api/_lib/env";
+import { models } from "../api/_lib/models";
 
 loadDotEnv(path.resolve(".env"));
 
@@ -16,7 +17,7 @@ const flag = (f: string) => {
   return i >= 0 ? argv[i + 1] : undefined;
 };
 const only = flag("--only")?.split(",");
-const MODELS = flag("--model") ? [flag("--model")!] : ["gemini-3.1-flash-image", "gemini-2.5-flash-image"];
+const MODELS = flag("--model") ? [flag("--model")!] : [models.personaImage, models.personaImageFallback];
 
 const STYLE =
   "Natural-light candid headshot photo, head and shoulders, plain soft neutral light-grey background, square framing, " +

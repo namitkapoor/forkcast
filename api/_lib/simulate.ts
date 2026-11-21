@@ -1,7 +1,7 @@
 import type { SimulateStepRequest, SimulateStepResponse } from "../../src/lib/api.js";
 import { callJson, HttpError } from "./gemini.js";
 import { screenToText } from "./dataModel.js";
-import { models } from "./models.js";
+import { getLlmConfig } from "./models.js";
 
 const SYSTEM = `You role-play a real person using a flight-booking assistant inside a chat app. Stay in character.
 You see the current screen as a text outline and a numbered list of things you can do next. Pick ONE option, or abandon if this persona realistically would (confusing screen, price too high, out of patience, goal already met elsewhere).
@@ -28,7 +28,16 @@ export async function simulateStep(req: SimulateStepRequest, timeoutMs = 20_000)
     `Options:\n${req.options.map((o, i) => `${i}. [${o.kind}] ${o.label}`).join("\n")}`,
   ].join("\n\n");
 
-  const r = await callJson<Pick>({ model: models.simulator, system: SYSTEM, prompt, temperature: 0.9, timeoutMs, retries: 4 }).catch((e) => {
+  const cfg = getLlmConfig("simulator");
+  const r = await callJson<Pick>({
+    model: cfg.model,
+    system: SYSTEM,
+    prompt,
+    temperature: cfg.temperature,
+    thinkingConfig: cfg.thinkingConfig,
+    timeoutMs: timeoutMs ?? cfg.timeoutMs,
+    retries: cfg.retries,
+  }).catch((e) => {
     throw new HttpError(502, `simulated user failed: ${(e as Error).message}`);
   });
   const d = r.data ?? {};
