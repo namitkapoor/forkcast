@@ -116,6 +116,16 @@ forkcast/
 
 ---
 
+## Run
+
+```
+npm install
+npm run dev                 # canvas at http://localhost:5173
+npm run check               # headless: simulate 500 sessions, run checks, print coverage
+npm run check -- --clean    # same, with the seeded price-drift bug turned off
+npm run build
+```
+
 ## Privacy
 
 Prediction runs only on aggregate graph statistics (edge counts, completion rates by context class). It never uses individual traces. Context classes below a minimum group size are merged or hidden. Demo data is entirely synthetic.
@@ -124,3 +134,7 @@ Prediction runs only on aggregate graph statistics (edge counts, completion rate
 - What counts as "the same node" when a generator invents a new component on the fly? Do we cluster by component type, by task state, or by both?
 - Is a pairwise sample of contexts enough, or do some context combinations (family plus price change, for example) fail only together?
 - At what traffic level should a heavily used generated path become a fixed, hand-built screen?
+
+## License
+
+[MIT](LICENSE)
