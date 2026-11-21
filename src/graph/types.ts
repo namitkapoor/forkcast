@@ -42,6 +42,10 @@ export interface FlowGraph {
 export interface Step {
   node: NodeId;
   props: Record<string, unknown>;
+  /** Generated screen shown at this step (RunFile.screens), when recorded. */
+  screenId?: string;
+  /** What the (simulated) user did to leave this step, e.g. "tapped Pay" or "asked: is there wifi?". */
+  userAction?: string;
 }
 
 export type Outcome = "completed" | "abandoned" | "error";
