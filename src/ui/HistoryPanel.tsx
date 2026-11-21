@@ -175,7 +175,10 @@ export function HistoryPanel(p: HistoryPanelProps) {
                   </b>
                   <span className="hist-card__time">{formatAgo(c.createdAt)}</span>
                 </div>
-                <div className="muted small mono">{c.variant} · {c.report.model}</div>
+                <div className="muted small mono">
+                  {c.variant} · {c.report.model}
+                  {c.report.thinkingLevel ? ` (${c.report.thinkingLevel.toLowerCase()})` : ""}
+                </div>
                 <div className="ux-dims" style={{ marginTop: 6 }}>
                   <div className="ux-dim">
                     <span>Usability</span>

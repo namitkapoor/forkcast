@@ -7,6 +7,13 @@ import type { Picks, Selection, Tool } from "../canvas/context";
 import { componentBindings, getComponents, getDataModel, resolveText } from "../a2ui/tree";
 import { ScreenFrame } from "../a2ui/ScreenFrame";
 import type { TokenUsage, UxEvaluationReport } from "../lib/api";
+import {
+  CRITIC_MODELS,
+  EFFORT_LABELS,
+  getCriticModelSpec,
+  normalizeCriticConfig,
+  type CriticConfig,
+} from "../lib/criticModels";
 import { formatVersionedRef, normalizeAnnotation } from "./annotations";
 import type { CritiqueRecord } from "./history";
 import {
@@ -59,6 +66,7 @@ export interface PropertiesProps {
   annotations: Record<string, Annotation[]>;
   uxReports: Record<string, UxEvaluationReport>;
   critiqueHistory: CritiqueRecord[];
+  criticConfig: CriticConfig;
   selection: Selection;
   picks: Picks | null;
   tool: Tool;
@@ -73,6 +81,7 @@ export interface PropertiesProps {
   onToggleFinalizeVersion: (baseId: string, index: number) => void;
   onToggleHiddenVersion: (baseId: string, index: number) => void;
   onCompareVersions: (baseId: string) => void;
+  onCriticConfigChange: (next: CriticConfig) => void;
   onCritiqueScreen: (screen: Screen) => void;
   onOpenHistory: () => void;
   onReplay: (r: ReplayState | null) => void;
@@ -439,14 +448,6 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
               <IconCols width={12} height={12} /> Compare ({versions.list.length})
             </button>
           )}
-          <button
-            className="btn btn--sm"
-            disabled={p.critiquing}
-            onClick={() => p.onCritiqueScreen(shown)}
-            title="Run Gemini UX critique and drop @Pin notes onto weak components"
-          >
-            <IconSpark width={12} height={12} /> {p.critiquing ? "Critiquing…" : "Critique UX"}
-          </button>
         </div>
       </section>
 
@@ -461,15 +462,60 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
           </button>
         </div>
 
+        {(() => {
+          const activeModelSpec = getCriticModelSpec(p.criticConfig.model);
+          return (
+            <div className="critic-bar nokeys">
+              <select
+                className="critic-select"
+                aria-label="Critic model"
+                title="Select Gemini 4 model for UX Critique"
+                value={p.criticConfig.model}
+                disabled={p.critiquing}
+                onChange={(e) => p.onCriticConfigChange(normalizeCriticConfig(e.target.value, p.criticConfig.effort))}
+              >
+                {CRITIC_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.shortLabel}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="critic-select critic-select--effort"
+                aria-label="Critic reasoning effort"
+                title={`Reasoning effort (valid for ${activeModelSpec.label}: ${activeModelSpec.validEfforts.join(", ")})`}
+                value={p.criticConfig.effort}
+                disabled={p.critiquing}
+                onChange={(e) => p.onCriticConfigChange(normalizeCriticConfig(p.criticConfig.model, e.target.value))}
+              >
+                {activeModelSpec.validEfforts.map((eff) => (
+                  <option key={eff} value={eff}>
+                    {EFFORT_LABELS[eff]}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="btn btn--sm btn--accent"
+                disabled={p.critiquing}
+                onClick={() => p.onCritiqueScreen(shown)}
+                title={`Run UX Critique with ${activeModelSpec.label} (${EFFORT_LABELS[p.criticConfig.effort]} effort)`}
+              >
+                <IconSpark width={12} height={12} /> {p.critiquing ? "Running…" : "Critique"}
+              </button>
+            </div>
+          );
+        })()}
+
         {p.critiquing && (
           <div className="msg msg--pending" style={{ marginBottom: uxReport ? 8 : 0 }}>
-            <span className="spinner" /> Evaluating usability, hierarchy, accessibility &amp; contracts…
+            <span className="spinner" /> Running {getCriticModelSpec(p.criticConfig.model).label} ({EFFORT_LABELS[p.criticConfig.effort]})…
           </div>
         )}
 
         {!uxReport && !p.critiquing && (
           <p className="muted small" style={{ margin: 0 }}>
-            Click <b>Critique UX</b> above to evaluate this screen with Gemini and pin actionable findings.
+            Pick a model &amp; reasoning effort above and click <b>Critique</b> to score this screen and pin findings.
           </p>
         )}
 
@@ -489,6 +535,10 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
                 ))}
               </div>
             )}
+            <div className="muted small mono" style={{ marginBottom: 6 }}>
+              {uxReport.model}
+              {uxReport.thinkingLevel ? ` · ${uxReport.thinkingLevel.toLowerCase()} effort` : ""}
+            </div>
             <div className="ux-dims">
               <div className="ux-dim">
                 <span>Usability</span>

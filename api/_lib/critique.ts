@@ -1,4 +1,5 @@
 import type { CritiquePin, CritiqueScreenRequest, CritiqueScreenResponse, TokenUsage } from "../../src/lib/api.js";
+import { isValidCriticModel, normalizeCriticConfig, type CriticEffort } from "../../src/lib/criticModels.js";
 import { callJson, CARBON_TIMEOUT_MS, HttpError, isCarbonModel, type JsonCallResult } from "./gemini.js";
 import { getComponents, screenToText } from "./dataModel.js";
 import { taskConfigs, type ThinkingLevelSetting } from "./models.js";
@@ -26,11 +27,25 @@ interface RawCritique {
 const clampScore = (v: unknown, fallback = 78): number =>
   typeof v === "number" && Number.isFinite(v) ? Math.round(Math.max(0, Math.min(100, v))) : fallback;
 
+function timeoutForModel(model: string): number {
+  if (isCarbonModel(model)) return CARBON_TIMEOUT_MS; // 200_000ms
+  if (/argon/i.test(model)) return 95_000;
+  return 35_000;
+}
+
 export async function critiqueScreen(req: CritiqueScreenRequest): Promise<CritiqueScreenResponse> {
   const screen = req?.screen;
   if (!screen || !Array.isArray(screen.messages) || !screen.messages.length) {
     throw new HttpError(400, "screen with messages is required");
   }
+
+  // Validate requested (model, thinkingLevel) combination strictly against CRITIC_MODELS
+  const envDefault = taskConfigs.uxEval;
+  const chosen = req.model
+    ? normalizeCriticConfig(req.model, req.thinkingLevel)
+    : isValidCriticModel(envDefault.model)
+      ? normalizeCriticConfig(envDefault.model, req.thinkingLevel ?? envDefault.thinkingLevel)
+      : { model: envDefault.model, effort: (envDefault.thinkingLevel ?? "MEDIUM") as CriticEffort };
 
   const comps = getComponents(screen.messages);
   const validIds = new Set(comps.map((c) => String(c.id)));
@@ -48,15 +63,12 @@ export async function critiqueScreen(req: CritiqueScreenRequest): Promise<Critiq
     .filter(Boolean)
     .join("\n\n");
 
-  const primary = taskConfigs.uxEval;
-  const primaryTimeout = isCarbonModel(primary.model) ? CARBON_TIMEOUT_MS : /argon/i.test(primary.model) ? 95_000 : 35_000;
   const candidates: { model: string; level: ThinkingLevelSetting; timeoutMs: number }[] = [
-    { model: primary.model, level: primary.thinkingLevel ?? "MEDIUM", timeoutMs: primaryTimeout },
+    { model: chosen.model, level: chosen.effort, timeoutMs: timeoutForModel(chosen.model) },
     { model: "gemini-4-neon", level: "LOW", timeoutMs: 25_000 },
     { model: "gemini-4-hydrogen", level: "LOW", timeoutMs: 20_000 },
   ];
 
-  // Deduplicate identical model+level pairs
   const seen = new Set<string>();
   const uniqueCandidates = candidates.filter((c) => {
     const k = `${c.model}:${c.level}`;
@@ -66,6 +78,7 @@ export async function critiqueScreen(req: CritiqueScreenRequest): Promise<Critiq
   });
 
   let result: JsonCallResult<RawCritique> | undefined;
+  let usedLevel: CriticEffort = chosen.effort;
   const errors: string[] = [];
   let accumulatedUsage: TokenUsage | undefined;
 
@@ -81,6 +94,7 @@ export async function critiqueScreen(req: CritiqueScreenRequest): Promise<Critiq
         retries: 1,
       });
       accumulatedUsage = r.usage;
+      usedLevel = cand.level;
       result = r;
       break;
     } catch (e) {
@@ -125,6 +139,7 @@ export async function critiqueScreen(req: CritiqueScreenRequest): Promise<Critiq
           : `Scored ${overallScore}/100 across usability, hierarchy, accessibility, and contract continuity.`,
       pins,
       model: result.model,
+      thinkingLevel: usedLevel,
       evaluatedAt: new Date().toISOString(),
     },
     usage: accumulatedUsage,

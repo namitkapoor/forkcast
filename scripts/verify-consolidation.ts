@@ -16,6 +16,7 @@ import {
 } from "../src/ui/references";
 import { flightGraph } from "../src/domains/flights/graph";
 import { fixtureScreens } from "../src/data/fixtures";
+import { CRITIC_MODELS, getCriticModelSpec, normalizeCriticConfig } from "../src/lib/criticModels";
 import { buildThinkingConfig, models, taskConfigs } from "../api/_lib/models.js";
 
 let passed = 0;
@@ -139,6 +140,22 @@ check("Gemini 4 model & thinkingLevel clamping across carbon/argon vs hydrogen/n
   assert.equal(nonG4, undefined);
   assert.ok(models.generator.length > 0);
   assert.ok(taskConfigs.editCore.model.length > 0);
+});
+
+check("Critic model & reasoning effort dropdown combinations stay 100% valid", () => {
+  assert.equal(CRITIC_MODELS.length, 4);
+  assert.deepEqual(getCriticModelSpec("gemini-4-carbon").validEfforts, ["LOW", "MEDIUM", "HIGH"]);
+  assert.deepEqual(getCriticModelSpec("gemini-4-argon").validEfforts, ["LOW", "MEDIUM", "HIGH"]);
+  assert.deepEqual(getCriticModelSpec("gemini-4-neon").validEfforts, ["LOW", "MEDIUM", "HIGH", "XHIGH"]);
+  assert.deepEqual(getCriticModelSpec("gemini-4-hydrogen").validEfforts, ["LOW", "MEDIUM", "HIGH", "XHIGH"]);
+
+  // Switching from Neon + XHIGH to Carbon or Argon automatically clamps effort to HIGH
+  assert.deepEqual(normalizeCriticConfig("gemini-4-neon", "XHIGH"), { model: "gemini-4-neon", effort: "XHIGH" });
+  assert.deepEqual(normalizeCriticConfig("gemini-4-carbon", "XHIGH"), { model: "gemini-4-carbon", effort: "HIGH" });
+  assert.deepEqual(normalizeCriticConfig("gemini-4-argon", "XHIGH"), { model: "gemini-4-argon", effort: "HIGH" });
+
+  // Invalid values coerce safely
+  assert.deepEqual(normalizeCriticConfig("unknown-model", "BOGUS"), { model: "gemini-4-carbon", effort: "MEDIUM" });
 });
 
 console.log(`\nall ${passed} consolidation checks passed`);

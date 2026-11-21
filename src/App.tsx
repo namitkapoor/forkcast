@@ -27,6 +27,13 @@ import {
   type TokenUsage,
   type UxEvaluationReport,
 } from "./lib/api";
+import {
+  DEFAULT_CRITIC_CONFIG,
+  EFFORT_LABELS,
+  getCriticModelSpec,
+  normalizeCriticConfig,
+  type CriticConfig,
+} from "./lib/criticModels";
 import { Properties, RightPanel, type PropertiesProps, type ReplayState } from "./ui/Inspector";
 import { Chat, type ChatMsg, type PendingDisambiguationState } from "./ui/Chat";
 import { Layers } from "./ui/Layers";
@@ -116,6 +123,10 @@ function Shell() {
     loadJson<Record<string, UxEvaluationReport>>("forkcast:uxReports", {}),
   );
   const [critiqueHistory, setCritiqueHistory] = useState<CritiqueRecord[]>(() => loadStoredCritiques());
+  const [criticConfig, setCriticConfigState] = useState<CriticConfig>(() => {
+    const saved = loadJson< Partial<CriticConfig> | null >("forkcast:criticConfig", null);
+    return saved ? normalizeCriticConfig(saved.model, saved.effort) : DEFAULT_CRITIC_CONFIG;
+  });
   const [events, setEvents] = useState<HistoryEvent[]>(() => loadStoredEvents());
   const [tokenTotal, setTokenTotal] = useState<number>(() => loadJson<number>("forkcast:tokens:total", 0));
   const [picks, setPicksState] = useState<Picks | null>(null);
@@ -145,6 +156,12 @@ function Shell() {
   const toastId = useRef(0);
   const chatInput = useRef<HTMLTextAreaElement>(null);
   const activeAbort = useRef<AbortController | null>(null);
+
+  const setCriticConfig = useCallback((next: CriticConfig) => {
+    const valid = normalizeCriticConfig(next.model, next.effort);
+    setCriticConfigState(valid);
+    saveJson("forkcast:criticConfig", valid);
+  }, []);
 
   const recordUsage = useCallback((u?: TokenUsage) => {
     if (!u || !u.totalTokens) return;
@@ -836,8 +853,10 @@ function Shell() {
       activeAbort.current?.abort();
       const ctrl = new AbortController();
       activeAbort.current = ctrl;
+      const chosen = normalizeCriticConfig(criticConfig.model, criticConfig.effort);
+      const spec = getCriticModelSpec(chosen.model);
       setCritiquing(true);
-      setBusy({ key: baseId, label: "Critiquing UX", startedAt: Date.now() });
+      setBusy({ key: baseId, label: `Critiquing UX · ${spec.shortLabel} (${EFFORT_LABELS[chosen.effort]})`, startedAt: Date.now() });
       try {
         const res = await critiqueScreen(
           {
@@ -845,6 +864,8 @@ function Shell() {
             nodeLabel: node?.label ?? targetScreen.nodeId,
             stage: node?.stage ?? "unknown",
             contracts,
+            model: chosen.model,
+            thinkingLevel: chosen.effort,
           },
           { signal: ctrl.signal },
         );
@@ -907,10 +928,11 @@ function Shell() {
 
         // Also post the full UX Critique report directly into this screen's Chat conversation & Activity Log
         const d = res.report.dimensions;
+        const modelTag = `${res.report.model}${res.report.thinkingLevel ? ` · ${res.report.thinkingLevel.toLowerCase()}` : ""}`;
         pushMsg(baseId, {
           role: "system",
           tone: "critique",
-          text: `UX Critique · ${res.report.overallScore}/100 (v${verIndex + 1})\nUsability ${d.usability} · Hierarchy ${d.hierarchy} · Access. ${d.accessibility} · Continuity ${d.continuity}\n${res.report.summary}`,
+          text: `UX Critique · ${res.report.overallScore}/100 (v${verIndex + 1} · ${modelTag})\nUsability ${d.usability} · Hierarchy ${d.hierarchy} · Access. ${d.accessibility} · Continuity ${d.continuity}\n${res.report.summary}`,
           chips: createdTokens,
           versionIndex: verIndex,
         });
@@ -948,7 +970,7 @@ function Shell() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [derived, recordUsage, remember, toast],
+    [derived, criticConfig, recordUsage, remember, toast],
   );
 
   const rerun = useCallback(() => {
@@ -1795,6 +1817,7 @@ function Shell() {
         annotations,
         uxReports,
         critiqueHistory,
+        criticConfig,
         selection,
         picks,
         tool,
@@ -1809,6 +1832,7 @@ function Shell() {
         onToggleFinalizeVersion: toggleFinalizeVersion,
         onToggleHiddenVersion: toggleHiddenVersion,
         onCompareVersions: (baseId) => setCompareScreenId(baseId),
+        onCriticConfigChange: setCriticConfig,
         onCritiqueScreen: runCritique,
         onOpenHistory: () => {
           setCollapsed(false);

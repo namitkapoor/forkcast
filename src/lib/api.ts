@@ -168,11 +168,15 @@ export interface DisambiguationResponse {
   usage?: TokenUsage;
 }
 
+import type { CriticEffort, CriticModelId } from "./criticModels.js";
+
 export interface CritiqueScreenRequest {
   screen: Screen;
   nodeLabel: string;
   stage: string;
   contracts?: string[];
+  model?: CriticModelId;
+  thinkingLevel?: CriticEffort;
 }
 
 export interface CritiquePin {
@@ -192,6 +196,7 @@ export interface UxEvaluationReport {
   summary: string;
   pins: CritiquePin[];
   model: string;
+  thinkingLevel?: CriticEffort;
   evaluatedAt: string;
 }
 

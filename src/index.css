@@ -871,3 +871,16 @@ button.fail:hover { background: var(--bad-soft); }
 .hist-ev__row b { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hist-ev__row span { flex: none; font-size: 10.5px; color: var(--text-3); }
 .hist-ev__det { font-size: 11.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+
+/* Critic Model & Effort Dropdowns */
+.critic-bar { display: flex; align-items: center; gap: 5px; margin-bottom: 8px; }
+.critic-select {
+  height: 26px; padding: 0 7px; border-radius: 8px; border: 0;
+  box-shadow: inset 0 0 0 1px var(--border-strong); background: var(--bg); color: var(--text);
+  font: 500 11.5px/1 var(--sans); cursor: pointer; min-width: 0;
+}
+.critic-select:hover:not(:disabled) { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24); }
+.critic-select:disabled { opacity: 0.5; cursor: not-allowed; }
+.critic-select--effort { width: 78px; flex: none; }
+.critic-bar > .critic-select:first-child { flex: 1; }
