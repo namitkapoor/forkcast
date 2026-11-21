@@ -7,14 +7,14 @@ import { IntentTree, type HeroPath } from "./IntentTree";
 import { NodePanel } from "./NodePanel";
 
 const METRICS: { label: string; get: (s: SuiteSummary) => number | undefined; fmt: (v: number) => string; lowerIsBetter?: boolean; title?: string }[] = [
-  { label: "Journeys with zero errors", get: (s) => s.passRate, fmt: pct },
+  // hidden: { label: "Journeys with zero errors", get: (s) => s.passRate, fmt: pct },
   {
     label: "Serves the person",
     get: (s) => (SHOW_PERSONA_CONTRACTS ? s.servesRate : undefined),
     fmt: pct,
     title: "Share of applicable persona-contract checks that pass (rules + Gemini judge), e.g. totals for 4, stops labeled, exclusions stated",
   },
-  { label: "Made-up facts on screen", get: (s) => s.failingChecks.grounding, fmt: (v) => String(v), lowerIsBetter: true },
+  // hidden: { label: "Made-up facts on screen", get: (s) => s.failingChecks.grounding, fmt: (v) => String(v), lowerIsBetter: true },
   { label: "Goal met", get: (s) => s.goalRate, fmt: pct },
   // hidden for demo:   { label: "Turns on pinned UI", get: (s) => s.pinnedShare, fmt: pct },
 ];

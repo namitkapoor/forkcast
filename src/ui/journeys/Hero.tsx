@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Journey, JourneysFile, Persona, Query } from "../../journeys/types";
 import { prefersReducedMotion } from "../storage";
 import { CircledScreen } from "./CircledScreen";
-import { cap, checkReason, contractStatus, contextChips, goalVerdict, inventedShare, isTap, pct, personaColor, pickJourney, SHOW_PERSONA_CONTRACTS, shortPersona, sortQueries, turnOk, type HeroMode } from "./data";
+import { cap, checkReason, contractStatus, contextChips, goalVerdict, isTap, pct, personaColor, pickJourney, SHOW_PERSONA_CONTRACTS, shortPersona, sortQueries, turnOk, type HeroMode } from "./data";
 import { decisionMarks, decisionsOf, humanize, onlyIn, SOURCE_LABEL } from "./why";
 import { IconCheck, IconChevron, IconPlay, IconSend, IconX } from "../icons";
 
@@ -106,7 +106,7 @@ export function Hero({ file, mode, onMode, queryId, turn, onQuery, onTurn, onOpe
             {mode === "naive" && !revealed
               ? "They all look fine. Does each one serve the person who asked?"
               : mode === "naive"
-              ? `Serves the person: ${pct(file.journeys.length ? (summarizeServes(file) ?? 0) : 0)} · ${pct(inventedShare(file))} of journeys also showed made-up facts`
+              ? `Serves the person: ${pct(summarizeServes(file) ?? 0)} · the screens ignore what the assistant knows about them`
               : `Serves the person: ${pct(summarizeServes(file) ?? 0)} · every screen tailored to what the assistant knows about them`}
           </p>
           {mode === "naive" && !revealed && (
@@ -273,10 +273,9 @@ function PersonaColumn({ p, conceal, naive, color, q, j, turn, clock, explain, h
   const typing = !ended && clock !== null && !isTap(msg) && clock < msg.length;
   const draft = typing ? msg.slice(0, clock) : "";
   const verdict = j ? goalVerdict(j, q, p) : null;
-  const visibleFails = (t: Journey["turns"][number]) => (conceal ? [] : t.checks.filter((c) => !c.ok && (SHOW_PERSONA_CONTRACTS ? true : c.kind !== "persona")));
+  const visibleFails = (t: Journey["turns"][number]) => (conceal ? [] : t.checks.filter((c) => !c.ok && c.kind === "persona"));
   const failing = cur && !ended ? visibleFails(cur) : [];
   const errors = failing.filter((c) => c.kind !== "persona");
-  const invented = failing.filter((c) => c.kind === "grounding").length;
   const contracts = !ended ? contractStatus(p, cur) : [];
   const judged = contracts.filter((c) => c.check);
   const marks = explain && !ended ? decisionMarks(cur?.screen) : [];
@@ -317,9 +316,6 @@ function PersonaColumn({ p, conceal, naive, color, q, j, turn, clock, explain, h
   return (
     <div className="hero-col" data-persona={p.id}>
       <PersonaHead p={p} color={color} />
-      <div className={`hero-badge ${invented ? "is-bad" : "is-ok"}${conceal ? " is-hidden" : ""}`} data-invented={conceal ? undefined : invented} aria-hidden={conceal}>
-        {invented ? `${invented} invented fact${invented === 1 ? "" : "s"} on this screen` : "0 invented facts on this screen"}
-      </div>
 
       <div
         className={`device${desktop ? " device--desktop" : ""}`}
@@ -464,7 +460,7 @@ function PersonaColumn({ p, conceal, naive, color, q, j, turn, clock, explain, h
           </ul>
         ) : (
           <div className="hero-ok">
-            <IconCheck width={12} height={12} /> {ended ? "Journey finished" : "Every price, time and flight on screen is real"}
+            <IconCheck width={12} height={12} /> {ended ? "Journey finished" : "Fits what this traveler needs"}
           </div>
         )}
         {SHOW_PERSONA_CONTRACTS && !conceal && contracts.length > 0 && (
