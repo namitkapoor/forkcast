@@ -30,7 +30,7 @@ export function Hero({ file, mode, onMode, queryId, turn, onQuery, onTurn, onOpe
   const [clock, setClock] = useState<number | null>(null);
   // Explain mode: numbered "why" tags on each phone, from the screen's decisions (gen-v2).
   const [explain, setExplain] = useState(false);
-  // Demo hook: the naive run starts with no circles ("can you spot it?") until "Run Forkcast checks".
+  // Demo hook: the naive run starts with no circles ("can you spot it?") until "Run Forkcast on these travelers".
   const [revealed, setRevealed] = useState(false);
   const conceal = mode === "naive" && !revealed;
   const [hl, setHl] = useState<{ personaId: string; componentId: string } | null>(null);
@@ -88,7 +88,7 @@ export function Hero({ file, mode, onMode, queryId, turn, onQuery, onTurn, onOpe
       <header className="hero__head">
         <h1>Same question, three travelers</h1>
         <p className="muted">
-          Getaway’s assistant generates a different screen for each person. Forkcast checks every one against the real fare data.
+          Forkcast creates digital travelers, lets them ask Getaway’s assistant the same thing, and checks whether the screen each one got actually serves them.
         </p>
       </header>
 
@@ -96,24 +96,22 @@ export function Hero({ file, mode, onMode, queryId, turn, onQuery, onTurn, onOpe
         <div className={`hero-mode hero-mode--${mode}`} data-mode={mode}>
           <div className="hero-seg" role="tablist" aria-label="Which assistant">
             <button role="tab" aria-selected={mode === "naive"} className={mode === "naive" ? "is-on" : ""} onClick={() => onMode("naive")} data-mode-btn="naive">
-              Naive prompt
+              Generic assistant
             </button>
             <button role="tab" aria-selected={mode === "checked"} className={mode === "checked" ? "is-on" : ""} onClick={() => onMode("checked")} data-mode-btn="checked">
-              Forkcast-checked
+              Persona-aware
             </button>
           </div>
           <p className="hero-mode__line" data-headline>
             {mode === "naive" && !revealed
-              ? "They look right. Can you spot what’s wrong?"
+              ? "They all look fine. Does each one serve the person who asked?"
               : mode === "naive"
-              ? `${pct(inventedShare(file))} of journeys showed made-up prices, times or dates`
-              : inventedShare(file) === 0
-                ? "Every price, time and date traced to real fare data"
-                : `${Math.round((1 - inventedShare(file)) * file.journeys.length)} of ${file.journeys.length} journeys: every price, time and date traced to real fare data`}
+              ? `Serves the person: ${pct(file.journeys.length ? (summarizeServes(file) ?? 0) : 0)} · ${pct(inventedShare(file))} of journeys also showed made-up facts`
+              : `Serves the person: ${pct(summarizeServes(file) ?? 0)} · every screen tailored to what the assistant knows about them`}
           </p>
           {mode === "naive" && !revealed && (
             <button className="hero-run" onClick={() => setRevealed(true)} data-run-checks>
-              Run Forkcast checks
+              Run Forkcast on these travelers
             </button>
           )}
           {mode === "naive" && revealed && (
@@ -248,7 +246,7 @@ function Avatar({ p, size }: { p: Persona; size: number }) {
 
 interface ColProps {
   p: Persona;
-  /** Hide every check result (naive run before "Run Forkcast checks"). */
+  /** Hide every check result (naive run before "Run Forkcast on these travelers"). */
   conceal: boolean;
   /** Naive run: circle correctness failures only, tagged with the invented value. */
   naive: boolean;
@@ -275,7 +273,7 @@ function PersonaColumn({ p, conceal, naive, color, q, j, turn, clock, explain, h
   const typing = !ended && clock !== null && !isTap(msg) && clock < msg.length;
   const draft = typing ? msg.slice(0, clock) : "";
   const verdict = j ? goalVerdict(j, q, p) : null;
-  const visibleFails = (t: Journey["turns"][number]) => (conceal ? [] : t.checks.filter((c) => !c.ok && (SHOW_PERSONA_CONTRACTS && !naive ? true : c.kind !== "persona")));
+  const visibleFails = (t: Journey["turns"][number]) => (conceal ? [] : t.checks.filter((c) => !c.ok && (SHOW_PERSONA_CONTRACTS ? true : c.kind !== "persona")));
   const failing = cur && !ended ? visibleFails(cur) : [];
   const errors = failing.filter((c) => c.kind !== "persona");
   const invented = failing.filter((c) => c.kind === "grounding").length;
@@ -529,4 +527,10 @@ function PersonaHead({ p, color }: { p: Persona; color?: string }) {
       </div>
     </div>
   );
+}
+
+function summarizeServes(file: { journeys: Journey[] }): number | undefined {
+  let ok = 0, n = 0;
+  for (const j of file.journeys) for (const t of j.turns) for (const c of t.checks) if (c.kind === "persona") { n++; if (c.ok) ok++; }
+  return n ? ok / n : undefined;
 }
