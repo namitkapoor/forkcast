@@ -103,11 +103,13 @@ export function TopBar(p: TopBarProps) {
       </div>
 
       <div className="topbar__mid">
-        {advanced && (
-          <button className="btn btn--ghost" onClick={() => p.onPage("journeys")} title="Back to the journeys page">
-            ← Journeys
-          </button>
-        )}
+        <nav className="seg" aria-label="Pages">
+          {([["journeys", "Journeys"], ["flow", "Flows"], ["tests", "Tests"]] as const).map(([id, label]) => (
+            <button key={id} className={p.page === id ? "is-on" : ""} aria-current={p.page === id ? "page" : undefined} onClick={() => p.onPage(id)}>
+              {label}
+            </button>
+          ))}
+        </nav>
       </div>
 
       <div className="topbar__right">

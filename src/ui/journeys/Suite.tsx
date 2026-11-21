@@ -60,9 +60,9 @@ export function Suite({ file, heroFile, mode, onMode, queryId, turn, onQuery, on
       {before && (
         <section className="jr-strip" aria-label="Before and after">
           <div className="jr-strip__legend">
-            <span className="muted">{file.baseline ? `Naive prompt (${file.baseline.promptVersion})` : "Before"}</span>
+            <span className="muted">{file.baseline ? "Initial output" : "Before"}</span>
             <span className="jr-strip__arrow">→</span>
-            <span>Grounded + persona-aware (gen-v2)</span>
+            <span>After 2 feedback rounds</span>
           </div>
           {METRICS.map((m) => {
             const a = m.get(before);

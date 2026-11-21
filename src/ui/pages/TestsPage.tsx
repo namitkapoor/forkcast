@@ -199,6 +199,62 @@ export function TestsPage(p: TestsPageProps) {
 
       <section className="tp-card">
         <div className="tp-card-head">
+          <h2 className="tp-h2">By traveler type</h2>
+          <span className="tp-legend">
+            <span className="tp-legend-item">
+              <span className="tp-cell tp-cell--ok tp-cell--sw" /> Passing
+            </span>
+            <span className="tp-legend-item">
+              <span className="tp-cell tp-cell--bad tp-cell--sw" /> Failing
+            </span>
+            <span className="tp-legend-item">
+              <span className="tp-cell tp-cell--none tp-cell--sw" /> Not visited
+            </span>
+          </span>
+        </div>
+        <div className="tp-matrix-wrap">
+          <table className="tp-matrix">
+            <thead>
+              <tr>
+                <th className="tp-mx-corner">Traveler</th>
+                {graph.nodes.map((n) => (
+                  <th key={n.id} className="tp-mx-col" title={n.label}>
+                    <span>{n.label}</span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {matrix.map((row) => (
+                <tr key={row.key}>
+                  <th className="tp-mx-row" scope="row">
+                    <span className="tp-mx-label">{row.label}</span>
+                    <span className="tp-mx-n">{row.count}</span>
+                  </th>
+                  {graph.nodes.map((n) => {
+                    const c = row.cells.get(n.id)!;
+                    const state = c.failures ? "bad" : c.sessions ? "ok" : "none";
+                    return (
+                      <td key={n.id}>
+                        <button
+                          type="button"
+                          className={`tp-cell tp-cell--${state}`}
+                          title={`${n.label}: ${plural(c.sessions, "session")} · ${plural(c.failures, "failure")}`}
+                          aria-label={`${row.label}, ${n.label}: ${plural(c.sessions, "session")}, ${plural(c.failures, "failure")}`}
+                          onClick={() => onOpenNode(n.id)}
+                        />
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="tp-card">
+        <div className="tp-card-head">
           <h2 className="tp-h2">Checks</h2>
           <span className="tp-card-note muted">Component invariants and edge contracts, failing first</span>
         </div>
@@ -313,61 +369,6 @@ export function TestsPage(p: TestsPageProps) {
         </div>
       </section>
 
-      <section className="tp-card">
-        <div className="tp-card-head">
-          <h2 className="tp-h2">By traveler type</h2>
-          <span className="tp-legend">
-            <span className="tp-legend-item">
-              <span className="tp-cell tp-cell--ok tp-cell--sw" /> Passing
-            </span>
-            <span className="tp-legend-item">
-              <span className="tp-cell tp-cell--bad tp-cell--sw" /> Failing
-            </span>
-            <span className="tp-legend-item">
-              <span className="tp-cell tp-cell--none tp-cell--sw" /> Not visited
-            </span>
-          </span>
-        </div>
-        <div className="tp-matrix-wrap">
-          <table className="tp-matrix">
-            <thead>
-              <tr>
-                <th className="tp-mx-corner">Traveler</th>
-                {graph.nodes.map((n) => (
-                  <th key={n.id} className="tp-mx-col" title={n.label}>
-                    <span>{n.label}</span>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {matrix.map((row) => (
-                <tr key={row.key}>
-                  <th className="tp-mx-row" scope="row">
-                    <span className="tp-mx-label">{row.label}</span>
-                    <span className="tp-mx-n">{row.count}</span>
-                  </th>
-                  {graph.nodes.map((n) => {
-                    const c = row.cells.get(n.id)!;
-                    const state = c.failures ? "bad" : c.sessions ? "ok" : "none";
-                    return (
-                      <td key={n.id}>
-                        <button
-                          type="button"
-                          className={`tp-cell tp-cell--${state}`}
-                          title={`${n.label}: ${plural(c.sessions, "session")} · ${plural(c.failures, "failure")}`}
-                          aria-label={`${row.label}, ${n.label}: ${plural(c.sessions, "session")}, ${plural(c.failures, "failure")}`}
-                          onClick={() => onOpenNode(n.id)}
-                        />
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
     </div>
   );
 }

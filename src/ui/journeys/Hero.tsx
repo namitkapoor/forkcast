@@ -88,7 +88,7 @@ export function Hero({ file, mode, onMode, queryId, turn, onQuery, onTurn, onOpe
       <header className="hero__head">
         <h1>Same question, three travelers</h1>
         <p className="muted">
-          Forkcast creates digital travelers, lets them ask Getaway’s assistant the same thing, and checks whether the screen each one got actually serves them.
+          How Getaway’s assistant first answered three synthetic travelers, and what it arrived at after two rounds of their feedback (generic → grounded → persona-aware).
         </p>
       </header>
 
@@ -96,10 +96,10 @@ export function Hero({ file, mode, onMode, queryId, turn, onQuery, onTurn, onOpe
         <div className={`hero-mode hero-mode--${mode}`} data-mode={mode}>
           <div className="hero-seg" role="tablist" aria-label="Which assistant">
             <button role="tab" aria-selected={mode === "naive"} className={mode === "naive" ? "is-on" : ""} onClick={() => onMode("naive")} data-mode-btn="naive">
-              Generic assistant
+              Initial output
             </button>
             <button role="tab" aria-selected={mode === "checked"} className={mode === "checked" ? "is-on" : ""} onClick={() => onMode("checked")} data-mode-btn="checked">
-              Persona-aware
+              After 2 feedback rounds
             </button>
           </div>
           <p className="hero-mode__line" data-headline>
