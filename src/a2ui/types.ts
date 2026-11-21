@@ -9,6 +9,19 @@ export const BASIC_CATALOG_ID = "https://a2ui.org/specification/v0_9/catalogs/ba
 /** One server→client A2UI message: { version: "v0.9", createSurface | updateComponents | updateDataModel | deleteSurface }. */
 export type A2uiMessage = { version: typeof A2UI_VERSION } & Record<string, unknown>;
 
+export type AnnotationKind = "note" | "bug" | "rule" | "mask";
+
+export interface AnnotationRevision {
+  id: string;
+  revisionNumber: number;
+  timestamp: string;
+  author: "designer" | "ai-evaluator";
+  text: string;
+  kind: AnnotationKind;
+  status: "open" | "resolved";
+  resolvedByVersionId?: string;
+}
+
 export interface Annotation {
   id: string;
   /** Component id inside the screen the note is pinned to, if any. */
@@ -17,8 +30,25 @@ export interface Annotation {
   x: number;
   y: number;
   text: string;
-  kind: "note" | "bug" | "rule";
+  kind: AnnotationKind;
   createdAt: string;
+  /** Monotonic mention handle, e.g. "Pin-1" or "Mask-1" for @Pin-1:v1 references. */
+  mentionTag?: string;
+  /** Open vs resolved state (defaults to "open"). */
+  status?: "open" | "resolved";
+  /** Who created the annotation (defaults to "designer"). */
+  author?: "designer" | "ai-evaluator";
+  /** Opt-in/out switch controlling whether this annotation is auto-sent in AI context (defaults to true). */
+  includeInAiFeedback?: boolean;
+  /** Painted region strokes (frame-relative 0..1) and bounding box when kind === "mask". */
+  strokes?: { x: number; y: number }[][];
+  maskBox?: { x: number; y: number; w: number; h: number };
+  /** Composite PNG data URL for multimodal Gemini mask refinement. */
+  maskDataUrl?: string;
+  /** A2UI component ids intersected by a painted mask. */
+  intersectingIds?: string[];
+  /** Full monotonic revision history (v1, v2, ...). */
+  revisions?: AnnotationRevision[];
 }
 
 /** One generated rendering of a node, for one user context. */

@@ -17,14 +17,15 @@ export interface Project {
   invariants: Invariant[];
 }
 
-/** Nodes, transitions and screens added from the canvas with "Branch: what if the user…". */
+/** Nodes, transitions, screens and manual walkthrough traces added from the canvas. */
 export interface Branches {
   nodes: StateNode[];
   transitions: Transition[];
   screens: Screen[];
+  traces?: Trace[];
 }
 
-export const emptyBranches: Branches = { nodes: [], transitions: [], screens: [] };
+export const emptyBranches: Branches = { nodes: [], transitions: [], screens: [], traces: [] };
 
 const TITLES: Record<string, string> = { flights: "Getaway · Flight booking", flight: "Getaway · Flight booking", "flight-booking": "Getaway · Flight booking" };
 
@@ -64,11 +65,13 @@ export function simulatedProject(seed: number, bug: boolean): Project {
 }
 
 export function withBranches(p: Project, b: Branches): Project {
-  if (!b.nodes.length && !b.transitions.length && !b.screens.length) return p;
+  const extraTraces = b.traces ?? [];
+  if (!b.nodes.length && !b.transitions.length && !b.screens.length && !extraTraces.length) return p;
   return {
     ...p,
     graph: { nodes: [...p.graph.nodes, ...b.nodes], transitions: [...p.graph.transitions, ...b.transitions] },
     screens: [...p.screens, ...b.screens],
+    traces: [...p.traces, ...extraTraces],
   };
 }
 

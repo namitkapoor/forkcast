@@ -6,16 +6,40 @@ import type { Annotation, Screen } from "../a2ui/types";
 import type { Picks, Selection, Tool } from "../canvas/context";
 import { componentBindings, getComponents, getDataModel, resolveText } from "../a2ui/tree";
 import { ScreenFrame } from "../a2ui/ScreenFrame";
-import { IconAlert, IconBranch, IconChevron, IconComment, IconLasso, IconPerson, IconSpark, IconX } from "./icons";
+import type { TokenUsage, UxEvaluationReport } from "../lib/api";
+import { formatVersionedRef, normalizeAnnotation } from "./annotations";
+import {
+  IconAlert,
+  IconBranch,
+  IconBrush,
+  IconCheck,
+  IconChevron,
+  IconCols,
+  IconComment,
+  IconCrown,
+  IconEdit,
+  IconEye,
+  IconEyeOff,
+  IconHistory,
+  IconLasso,
+  IconPerson,
+  IconPin,
+  IconSpark,
+  IconUndo,
+  IconX,
+} from "./icons";
+import { useVoiceInput, VoiceMicButton } from "./useVoiceInput";
 
 // Figma-style properties panel for whatever is selected: a picked component, a screen, a step
-// or a transition, plus session replay. Rendered in the right panel (desktop) or the left
-// sheet's Props tab (mobile).
+// or a transition, plus session replay, versioned @Pin/@Mask annotations, variant compare/finalize,
+// and automated Gemini UX critique.
 
 export interface Versions {
   /** All versions of a base screen, original first. */
   list: Screen[];
   active: number;
+  finalized?: number;
+  hidden: number[];
 }
 
 export interface ReplayState {
@@ -32,15 +56,22 @@ export interface PropertiesProps {
   screensByNode: Map<string, Screen[]>;
   screenById: Map<string, Screen>;
   annotations: Record<string, Annotation[]>;
+  uxReports: Record<string, UxEvaluationReport>;
   selection: Selection;
   picks: Picks | null;
   tool: Tool;
   branching: boolean;
   generating: boolean;
+  critiquing: boolean;
+  busy: boolean;
   replay: ReplayState | null;
   versionsOf: (baseId: string) => Versions;
   shown: (screen: Screen) => Screen;
   onSetVersion: (baseId: string, index: number) => void;
+  onToggleFinalizeVersion: (baseId: string, index: number) => void;
+  onToggleHiddenVersion: (baseId: string, index: number) => void;
+  onCompareVersions: (baseId: string) => void;
+  onCritiqueScreen: (screen: Screen) => void;
   onReplay: (r: ReplayState | null) => void;
   onFocusNode: (id: string) => void;
   onFocusEdge: (key: string) => void;
@@ -48,11 +79,20 @@ export interface PropertiesProps {
   onClear: () => void;
   onBranch: (screen: Screen, utterance: string) => void;
   onGenerate: (nodeId: string) => void;
+  onMentionInChat: (token: string) => void;
+  onEditAnnotation: (screenId: string, id: string, nextText: string) => void;
+  onToggleAnnotationStatus: (screenId: string, id: string) => void;
+  onToggleAnnotationAi: (screenId: string, id: string) => void;
+  onSetAllAnnotationsAi: (screenId: string, include: boolean) => void;
+  onRestoreAnnotationRevision: (screenId: string, id: string, revId: string) => void;
+  onResolveIncludedAnnotations: (baseScreen: Screen) => void;
   onDeleteAnnotation: (screenId: string, id: string) => void;
   onEditWithAI: () => void;
   onFlagPicked: () => void;
   onLasso: () => void;
   onClearPicks: () => void;
+  onVoiceUsage?: (u: TokenUsage) => void;
+  onVoiceError?: (msg: string) => void;
 }
 
 const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0);
@@ -193,7 +233,6 @@ function ComponentView(p: PropertiesProps & { screen: Screen; picks: Picks }) {
   const first = p.picks.items[0];
   const c = comps.get(first.id);
   const bindings = c ? componentBindings(c, model) : [];
-  // Contracts whose carried keys this component displays (via a binding path ending in that key).
   const checks = nodeChecks(p, p.screen.nodeId).filter(
     (k) => !k.carries.length || k.carries.some((key) => bindings.some((b) => b.path.split("/").some((seg) => seg.toLowerCase().startsWith(key.toLowerCase())))),
   );
@@ -293,10 +332,27 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
   const shown = p.shown(screen);
   const node = p.graph.nodes.find((n) => n.id === screen.nodeId);
   const labelOf = useLabels(p.graph);
-  const notes = p.annotations[shown.id] ?? [];
+  const screenNotes = (p.annotations[shown.id] ?? []).map((a, i) => normalizeAnnotation(a, i + 1));
   const versions = p.versionsOf(screen.id);
+  const uxReport = p.uxReports[shown.id];
+
   const [text, setText] = useState("");
+  const textRef = useRef(text);
+  textRef.current = text;
   const input = useRef<HTMLInputElement>(null);
+
+  const [pinScope, setPinScope] = useState<"screen" | "all">("screen");
+  const [editingAnnId, setEditingAnnId] = useState<string | null>(null);
+  const [editAnnText, setEditAnnText] = useState("");
+  const [expandedRevAnnId, setExpandedRevAnnId] = useState<string | null>(null);
+
+  const branchVoice = useVoiceInput({
+    getCurrentText: () => textRef.current,
+    onTextUpdate: setText,
+    graph: p.graph,
+    onUsage: p.onVoiceUsage,
+    onError: p.onVoiceError,
+  });
 
   useEffect(() => {
     if (p.tool === "branch") input.current?.focus();
@@ -304,8 +360,33 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
 
   const submit = () => {
     if (!text.trim() || p.branching) return;
+    branchVoice.stop();
     p.onBranch(shown, text.trim());
   };
+
+  const allFlowNotes = useMemo(() => {
+    const out: { screenId: string; baseId: string; nodeId: string; ann: Annotation }[] = [];
+    for (const [sid, list] of Object.entries(p.annotations)) {
+      const baseId = sid.split("@")[0];
+      const owner = p.screenById.get(baseId);
+      for (const a of list) {
+        out.push({ screenId: sid, baseId, nodeId: owner?.nodeId ?? "", ann: normalizeAnnotation(a) });
+      }
+    }
+    return out;
+  }, [p.annotations, p.screenById]);
+
+  const displayedNotes = useMemo(
+    () =>
+      pinScope === "screen"
+        ? screenNotes.map((ann) => ({ screenId: shown.id, baseId: screen.id, nodeId: screen.nodeId, ann }))
+        : allFlowNotes,
+    [pinScope, screenNotes, shown.id, screen.id, screen.nodeId, allFlowNotes],
+  );
+
+  const optedInCount = screenNotes.filter((a) => a.status !== "resolved" && a.includeInAiFeedback !== false).length;
+  const hiddenSet = new Set(versions.hidden);
+  const isCurrentFinal = versions.finalized === versions.active;
 
   return (
     <>
@@ -315,6 +396,11 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
         </div>
         <div className="title-row">
           <h2 className="mono">{shown.variant}</h2>
+          {isCurrentFinal && (
+            <span className="badge badge--ok">
+              <IconCrown width={10} height={10} /> Final
+            </span>
+          )}
         </div>
         {shown.rationale && <p className="rationale">{shown.rationale}</p>}
         <div className="chips">
@@ -325,18 +411,96 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
             </span>
           ))}
         </div>
+        <div className="row-btns" style={{ marginTop: 10 }}>
+          <button
+            className={`btn btn--sm${isCurrentFinal ? " btn--accent" : ""}`}
+            onClick={() => p.onToggleFinalizeVersion(screen.id, versions.active)}
+            title={isCurrentFinal ? "Unmark finalized version" : "Mark this version as finalized"}
+          >
+            <IconCrown width={12} height={12} /> {isCurrentFinal ? "Finalized" : "Mark Final"}
+          </button>
+          {versions.list.length > 1 && (
+            <button className="btn btn--sm" onClick={() => p.onCompareVersions(screen.id)}>
+              <IconCols width={12} height={12} /> Compare ({versions.list.length})
+            </button>
+          )}
+          <button
+            className="btn btn--sm"
+            disabled={p.critiquing}
+            onClick={() => p.onCritiqueScreen(shown)}
+            title="Run Gemini UX critique and drop @Pin notes onto weak components"
+          >
+            <IconSpark width={12} height={12} /> {p.critiquing ? "Critiquing…" : "Critique UX"}
+          </button>
+        </div>
       </section>
 
       {versions.list.length > 1 && (
         <section className="block">
-          <h3>Versions</h3>
+          <h3>
+            Versions <span className="count">{versions.list.length}</span>
+          </h3>
           <div className="chips">
-            {versions.list.map((v, i) => (
-              <button key={v.id} className={`vchip${versions.active === i ? " is-on" : ""}`} onClick={() => p.onSetVersion(screen.id, i)}>
-                {i === 0 ? "v1 original" : `v${i + 1}`}
-              </button>
-            ))}
+            {versions.list.map((v, i) => {
+              const hidden = hiddenSet.has(i);
+              if (hidden && versions.active !== i) return null;
+              return (
+                <span key={v.id} className="ver-pill-wrap">
+                  <button className={`vchip${versions.active === i ? " is-on" : ""}`} onClick={() => p.onSetVersion(screen.id, i)}>
+                    {versions.finalized === i && <IconCrown width={10} height={10} style={{ marginRight: 3, verticalAlign: -1 }} />}
+                    {i === 0 ? "v1 original" : `v${i + 1}`}
+                  </button>
+                  {versions.list.length > 1 && (
+                    <button
+                      className="ver-eye"
+                      onClick={() => p.onToggleHiddenVersion(screen.id, i)}
+                      title={hidden ? "Restore version" : "Hide version"}
+                      aria-label={hidden ? "Restore version" : "Hide version"}
+                    >
+                      {hidden ? <IconEye width={10} height={10} /> : <IconEyeOff width={10} height={10} />}
+                    </button>
+                  )}
+                </span>
+              );
+            })}
           </div>
+          {versions.hidden.length > 0 && (
+            <div className="muted small" style={{ marginTop: 6 }}>
+              {versions.hidden.length} hidden ·{" "}
+              <button className="msg__link" onClick={() => p.onCompareVersions(screen.id)}>
+                manage in Compare
+              </button>
+            </div>
+          )}
+        </section>
+      )}
+
+      {uxReport && (
+        <section className="block">
+          <h3>
+            UX Critique <span className="badge badge--accent">{uxReport.overallScore}/100</span>
+          </h3>
+          <div className="ux-dims">
+            <div className="ux-dim">
+              <span>Usability</span>
+              <b>{uxReport.dimensions.usability}</b>
+            </div>
+            <div className="ux-dim">
+              <span>Hierarchy</span>
+              <b>{uxReport.dimensions.hierarchy}</b>
+            </div>
+            <div className="ux-dim">
+              <span>Access.</span>
+              <b>{uxReport.dimensions.accessibility}</b>
+            </div>
+            <div className="ux-dim">
+              <span>Continuity</span>
+              <b>{uxReport.dimensions.continuity}</b>
+            </div>
+          </div>
+          <p className="muted small" style={{ margin: "6px 0 0" }}>
+            {uxReport.summary}
+          </p>
         </section>
       )}
 
@@ -360,6 +524,7 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
             What if the user…
           </label>
           <div className="branch__row">
+            <VoiceMicButton voice={branchVoice} disabled={p.branching} compact />
             <input
               id="branch-input"
               ref={input}
@@ -377,31 +542,202 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
       </section>
 
       <section className="block">
-        <h3>
-          Annotations <span className="count">{notes.length}</span>
-        </h3>
-        {notes.length === 0 && (
+        <div className="ann-head">
+          <h3>
+            Annotations <span className="count">{displayedNotes.length}</span>
+          </h3>
+          <div className="seg ann-scope">
+            <button className={pinScope === "screen" ? "is-on" : ""} onClick={() => setPinScope("screen")}>
+              Screen ({screenNotes.length})
+            </button>
+            <button className={pinScope === "all" ? "is-on" : ""} onClick={() => setPinScope("all")}>
+              All ({allFlowNotes.length})
+            </button>
+          </div>
+        </div>
+
+        {pinScope === "screen" && screenNotes.length > 0 && (
+          <div className="ann-batch">
+            <span className="muted small">AI feedback:</span>
+            <button className="msg__link" onClick={() => p.onSetAllAnnotationsAi(shown.id, true)}>
+              All on
+            </button>
+            <span className="muted">·</span>
+            <button className="msg__link" onClick={() => p.onSetAllAnnotationsAi(shown.id, false)}>
+              None
+            </button>
+          </div>
+        )}
+
+        {displayedNotes.length === 0 && (
           <p className="muted small">
-            Press <span className="kbd">C</span> and click a component to pin a note.
+            Press <span className="kbd">C</span> to pin a component or <span className="kbd">M</span> to paint a region mask.
           </p>
         )}
+
         <ol className="notes">
-          {notes.map((a, i) => (
-            <li key={a.id} className={`note note--${a.kind}`}>
-              <span className={`pin pin--${a.kind} pin--inline`}>{i + 1}</span>
-              <div className="note__body">
-                <div className="note__meta">
-                  {a.kind}
-                  {a.componentId ? ` · ${a.componentId}` : ""}
+          {displayedNotes.map(({ screenId: ownerSid, baseId, nodeId: ownerNid, ann }, i) => {
+            const verToken = formatVersionedRef(ann);
+            const resolved = ann.status === "resolved";
+            const isEditing = editingAnnId === ann.id;
+            const showRevs = expandedRevAnnId === ann.id;
+            const revs = ann.revisions ?? [];
+
+            return (
+              <li key={ann.id} className={`note note--${ann.kind}${resolved ? " is-resolved" : ""}`}>
+                <span className={`pin pin--${ann.kind} pin--inline`}>{ann.kind === "mask" ? `M${i + 1}` : i + 1}</span>
+                <div className="note__body">
+                  <div className="note__top">
+                    <button
+                      type="button"
+                      className="note__tok"
+                      onClick={() => p.onMentionInChat(verToken)}
+                      title={`Insert ${verToken} into Chat`}
+                    >
+                      {ann.kind === "mask" ? <IconBrush width={10} height={10} /> : <IconPin width={10} height={10} />}
+                      {verToken}
+                    </button>
+                    {ann.author === "ai-evaluator" && <span className="badge badge--accent">AI</span>}
+                    {pinScope === "all" && baseId !== screen.id && ownerNid && (
+                      <button type="button" className="msg__link" onClick={() => p.onSelectScreen(baseId, ownerNid)}>
+                        {labelOf(ownerNid)}
+                      </button>
+                    )}
+                    <div className="note__acts">
+                      <button
+                        type="button"
+                        className="note__chat-btn"
+                        onClick={() => p.onMentionInChat(verToken)}
+                        title="Reference in Chat"
+                      >
+                        +Chat
+                      </button>
+                      <button
+                        type="button"
+                        className={`icon-btn icon-btn--sm${resolved ? " is-ok" : ""}`}
+                        onClick={() => p.onToggleAnnotationStatus(ownerSid, ann.id)}
+                        title={resolved ? "Reopen annotation" : "Mark resolved"}
+                        aria-label={resolved ? "Reopen annotation" : "Mark resolved"}
+                      >
+                        <IconCheck width={12} height={12} />
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-btn icon-btn--sm"
+                        aria-label="Delete annotation"
+                        onClick={() => p.onDeleteAnnotation(ownerSid, ann.id)}
+                      >
+                        <IconX width={12} height={12} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="note__meta">
+                    {ann.kind}
+                    {ann.componentId ? ` · ${ann.componentId}` : ""}
+                    {ann.intersectingIds?.length ? ` · ${ann.intersectingIds.length} comps` : ""}
+                  </div>
+
+                  {isEditing ? (
+                    <div className="note__edit nokeys">
+                      <textarea
+                        rows={2}
+                        value={editAnnText}
+                        onChange={(e) => setEditAnnText(e.target.value)}
+                      />
+                      <div className="row-btns" style={{ justifyContent: "flex-end", marginTop: 4 }}>
+                        <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditingAnnId(null)}>
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn--sm btn--accent"
+                          onClick={() => {
+                            if (editAnnText.trim()) p.onEditAnnotation(ownerSid, ann.id, editAnnText.trim());
+                            setEditingAnnId(null);
+                          }}
+                        >
+                          Save v{revs.length + 1}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="note__txt">{ann.text}</div>
+                  )}
+
+                  <div className="note__foot">
+                    <label className="ai-toggle">
+                      <input
+                        type="checkbox"
+                        checked={ann.includeInAiFeedback !== false}
+                        onChange={() => p.onToggleAnnotationAi(ownerSid, ann.id)}
+                      />
+                      <span>{ann.includeInAiFeedback !== false ? "Include in AI" : "Excluded"}</span>
+                    </label>
+                    <div className="note__foot-btns">
+                      <button
+                        type="button"
+                        className="note__mini"
+                        onClick={() => {
+                          setEditingAnnId(ann.id);
+                          setEditAnnText(ann.text);
+                        }}
+                      >
+                        <IconEdit width={10} height={10} /> Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="note__mini"
+                        onClick={() => setExpandedRevAnnId(showRevs ? null : ann.id)}
+                      >
+                        <IconHistory width={10} height={10} /> Revs ({Math.max(1, revs.length)})
+                      </button>
+                    </div>
+                  </div>
+
+                  {showRevs && revs.length > 0 && (
+                    <div className="rev-list">
+                      {[...revs].reverse().map((rev) => {
+                        const rTok = formatVersionedRef(ann, rev.revisionNumber);
+                        return (
+                          <div key={rev.id} className="rev-row">
+                            <div className="rev-row__head">
+                              <code className="mono">{rTok}</code>
+                              <span className="muted">{rev.author}</span>
+                              <button type="button" className="msg__link" onClick={() => p.onMentionInChat(rTok)}>
+                                +{rTok}
+                              </button>
+                              {rev.revisionNumber < revs.length && (
+                                <button
+                                  type="button"
+                                  className="msg__link"
+                                  onClick={() => p.onRestoreAnnotationRevision(ownerSid, ann.id, rev.id)}
+                                >
+                                  <IconUndo width={10} height={10} /> Restore
+                                </button>
+                              )}
+                            </div>
+                            <div className="rev-row__txt">{rev.text}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-                <div>{a.text}</div>
-              </div>
-              <button className="icon-btn icon-btn--sm" aria-label="Delete annotation" onClick={() => p.onDeleteAnnotation(shown.id, a.id)}>
-                <IconX width={12} height={12} />
-              </button>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ol>
+
+        {optedInCount > 0 && (
+          <button
+            className="btn btn--block btn--accent"
+            disabled={p.busy}
+            onClick={() => p.onResolveIncludedAnnotations(screen)}
+          >
+            <IconSpark width={13} height={13} /> Resolve {optedInCount} included pin{optedInCount === 1 ? "" : "s"} with AI
+          </button>
+        )}
       </section>
     </>
   );

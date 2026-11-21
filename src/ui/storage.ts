@@ -1,4 +1,5 @@
 import type { Annotation } from "../a2ui/types";
+import { normalizeAnnotation } from "./annotations";
 
 // Annotations persist per screen in this browser. Storage can be blocked (private mode,
 // previews), so every access is guarded and the canvas works without it.
@@ -9,7 +10,7 @@ export function loadAnnotations(screenId: string): Annotation[] {
   try {
     const raw = window.localStorage.getItem(key(screenId));
     const parsed: unknown = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? (parsed as Annotation[]) : [];
+    return Array.isArray(parsed) ? (parsed as Annotation[]).map((a, i) => normalizeAnnotation(a, i + 1)) : [];
   } catch {
     return [];
   }
@@ -26,7 +27,7 @@ export function saveAnnotations(screenId: string, list: Annotation[]): void {
 
 export function mergeAnnotations(a: Annotation[], b: Annotation[]): Annotation[] {
   const seen = new Set(a.map((x) => x.id));
-  return [...a, ...b.filter((x) => !seen.has(x.id))];
+  return [...a, ...b.filter((x) => !seen.has(x.id))].map((item, i) => normalizeAnnotation(item, i + 1));
 }
 
 export const prefersReducedMotion = () =>

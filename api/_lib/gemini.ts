@@ -1,8 +1,9 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, type ContentListUnion } from "@google/genai";
+import { buildThinkingConfig, type ThinkingLevelSetting } from "./models.js";
 
 let client: GoogleGenAI | undefined;
 
-function getClient(): GoogleGenAI {
+export function getClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new HttpError(500, "GEMINI_API_KEY is not set on the server");
   client ??= new GoogleGenAI({ apiKey });
@@ -22,11 +23,27 @@ export class HttpError extends Error {
 
 export class TimeoutError extends Error {}
 
+export interface InlineMediaPart {
+  mimeType: string;
+  data: string;
+}
+
+export interface TokenUsageInfo {
+  model: string;
+  thinkingLevel?: ThinkingLevelSetting;
+  promptTokens: number;
+  outputTokens: number;
+  thoughtTokens: number;
+  totalTokens: number;
+}
+
 export interface JsonCallOptions {
   model: string;
   system: string;
   prompt: string;
   temperature?: number;
+  thinkingLevel?: ThinkingLevelSetting;
+  inlineMedia?: InlineMediaPart[];
   /** Per-attempt timeout. */
   timeoutMs?: number;
   /** Retries on 429 / 5xx / network errors (exponential backoff). Timeouts are not retried. */
@@ -38,6 +55,7 @@ export interface JsonCallResult<T> {
   raw: string;
   model: string;
   ms: number;
+  usage: TokenUsageInfo;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -69,7 +87,7 @@ export function parseJsonLoose(text: string): unknown {
   }
 }
 
-async function once(opts: JsonCallOptions): Promise<string> {
+async function once(opts: JsonCallOptions): Promise<{ text: string; usage: TokenUsageInfo }> {
   const timeoutMs = opts.timeoutMs ?? 45_000;
   const ctrl = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -80,14 +98,29 @@ async function once(opts: JsonCallOptions): Promise<string> {
     }, timeoutMs);
   });
   try {
+    const contents: ContentListUnion =
+      opts.inlineMedia && opts.inlineMedia.length > 0
+        ? [
+            {
+              role: "user",
+              parts: [
+                { text: opts.prompt },
+                ...opts.inlineMedia.map((m) => ({ inlineData: { mimeType: m.mimeType, data: m.data } })),
+              ],
+            },
+          ]
+        : opts.prompt;
+
+    const thinkingConfig = buildThinkingConfig(opts.model, opts.thinkingLevel);
     const res = await Promise.race([
       getClient().models.generateContent({
         model: opts.model,
-        contents: opts.prompt,
+        contents,
         config: {
           systemInstruction: opts.system,
           responseMimeType: "application/json",
           temperature: opts.temperature,
+          ...(thinkingConfig ? { thinkingConfig } : {}),
           abortSignal: ctrl.signal,
         },
       }),
@@ -95,7 +128,23 @@ async function once(opts: JsonCallOptions): Promise<string> {
     ]);
     const text = res.text;
     if (!text) throw new Error(`${opts.model} returned an empty response`);
-    return text;
+    const meta = res.usageMetadata as
+      | { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number }
+      | undefined;
+    const promptTokens = meta?.promptTokenCount ?? 0;
+    const outputTokens = meta?.candidatesTokenCount ?? 0;
+    const thoughtTokens = meta?.thoughtsTokenCount ?? 0;
+    return {
+      text,
+      usage: {
+        model: opts.model,
+        thinkingLevel: opts.thinkingLevel,
+        promptTokens,
+        outputTokens,
+        thoughtTokens,
+        totalTokens: promptTokens + outputTokens + thoughtTokens,
+      },
+    };
   } finally {
     clearTimeout(timer);
   }
@@ -107,8 +156,8 @@ export async function callJson<T = unknown>(opts: JsonCallOptions): Promise<Json
   const t0 = Date.now();
   for (let attempt = 0; ; attempt++) {
     try {
-      const raw = await once(opts);
-      return { data: parseJsonLoose(raw) as T, raw, model: opts.model, ms: Date.now() - t0 };
+      const { text: raw, usage } = await once(opts);
+      return { data: parseJsonLoose(raw) as T, raw, model: opts.model, ms: Date.now() - t0, usage };
     } catch (e) {
       if (attempt >= retries || !isRetryable(e)) throw e;
       const base = statusOf(e) === 429 ? 2000 : 800;
