@@ -4,6 +4,8 @@ import path from "node:path";
 import { defineConfig, loadEnv, type Plugin, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 
+const MAX_DEV_BODY_BYTES = 8 * 1024 * 1024;
+
 /**
  * Serves /api/<name> in `npm run dev` by loading api/<name>.ts through Vite's SSR loader and
  * calling its default export with Vercel-style (req, res) helpers. Same handler modules as
@@ -26,12 +28,21 @@ function apiRoutes(): Plugin {
         const send = (status: number, body: unknown) => {
           if (res.headersSent) return;
           res.statusCode = status;
-          res.setHeader("content-type", "application/json");
+          res.setHeader("content-type", "application/json; charset=utf-8");
           res.end(JSON.stringify(body));
         };
         try {
           const chunks: Buffer[] = [];
-          for await (const c of req) chunks.push(c as Buffer);
+          let totalBytes = 0;
+          for await (const c of req) {
+            const buf = Buffer.isBuffer(c) ? c : Buffer.from(c as Uint8Array);
+            totalBytes += buf.length;
+            if (totalBytes > MAX_DEV_BODY_BYTES) {
+              send(413, { error: `request body exceeds ${Math.round(MAX_DEV_BODY_BYTES / 1024 / 1024)}MB limit` });
+              return;
+            }
+            chunks.push(buf);
+          }
           const text = Buffer.concat(chunks).toString("utf8");
           let body: unknown = undefined;
           if (text) {
@@ -71,4 +82,39 @@ function apiRoutes(): Plugin {
 
 export default defineConfig({
   plugins: [react(), apiRoutes()],
+  build: {
+    rolldownOptions: {
+      input: {
+        main: path.resolve(import.meta.dirname, "index.html"),
+        gallery: path.resolve(import.meta.dirname, "gallery.html"),
+        harness: path.resolve(import.meta.dirname, "harness.html"),
+      },
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: "vendor-react",
+              test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+              priority: 30,
+            },
+            {
+              name: "vendor-xyflow",
+              test: /node_modules[\\/]@xyflow[\\/]/,
+              priority: 25,
+            },
+            {
+              name: "vendor-markdown",
+              test: /node_modules[\\/](@a2ui[\\/]markdown-it|markdown-it|dompurify|entities|linkify-it|mdurl|uc\.micro)[\\/]/,
+              priority: 22,
+            },
+            {
+              name: "vendor-a2ui",
+              test: /node_modules[\\/]@a2ui[\\/]/,
+              priority: 20,
+            },
+          ],
+        },
+      },
+    },
+  },
 });

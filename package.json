@@ -15,6 +15,8 @@
     "simulate:journeys": "tsx scripts/simulate-journeys.ts",
     "check:journeys": "tsx scripts/journeys-check.ts",
     "check:studio": "tsx scripts/verify-consolidation.ts",
+    "check:prod": "tsx scripts/verify-production.ts",
+    "check:all": "npm run typecheck && npm run typecheck:api && npm run check && npm run check:journeys && npm run check:studio && npm run check:prod",
     "judge:personas": "tsx scripts/judge-personas.ts"
   },
   "dependencies": {
