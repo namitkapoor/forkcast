@@ -14,7 +14,7 @@ const METRICS: { label: string; get: (s: SuiteSummary) => number | undefined; fm
     fmt: pct,
     title: "Share of applicable persona-contract checks that pass (rules + Gemini judge), e.g. totals for 4, stops labeled, exclusions stated",
   },
-  // hidden: { label: "Made-up facts on screen", get: (s) => s.failingChecks.grounding, fmt: (v) => String(v), lowerIsBetter: true },
+  // hidden: { label: "Not in fare datas on screen", get: (s) => s.failingChecks.grounding, fmt: (v) => String(v), lowerIsBetter: true },
   { label: "Goal met", get: (s) => s.goalRate, fmt: pct },
   // hidden for demo:   { label: "Turns on pinned UI", get: (s) => s.pinnedShare, fmt: pct },
 ];
@@ -60,9 +60,9 @@ export function Suite({ file, heroFile, mode, onMode, queryId, turn, onQuery, on
       {before && (
         <section className="jr-strip" aria-label="Before and after">
           <div className="jr-strip__legend">
-            <span className="muted">{file.baseline ? `Naive prompt (${file.baseline.promptVersion})` : "Before"}</span>
+            <span className="muted">Generic assistant</span>
             <span className="jr-strip__arrow">→</span>
-            <span>Grounded + persona-aware (gen-v2)</span>
+            <span>Persona-aware</span>
           </div>
           {METRICS.map((m) => {
             const a = m.get(before);
@@ -87,7 +87,7 @@ export function Suite({ file, heroFile, mode, onMode, queryId, turn, onQuery, on
         <header className="jr-card__head">
           <h2>The flow people actually took</h2>
           <span className="muted small">
-            Built from {file.journeys.length} journeys ({turns} turns). Each box is what people were trying to do, with each traveler’s pass rate.
+            Built from {file.journeys.length} journeys ({turns} turns). Each box is what people were trying to do. Numbers = how many reached it; % = screens that fit that traveler.
           </span>
         </header>
         <ol className="it-steps" aria-label="How the flow is built">

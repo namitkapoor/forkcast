@@ -30,9 +30,7 @@ export function Hero({ file, mode, onMode, queryId, turn, onQuery, onTurn, onOpe
   const [clock, setClock] = useState<number | null>(null);
   // Explain mode: numbered "why" tags on each phone, from the screen's decisions (gen-v2).
   const [explain, setExplain] = useState(false);
-  // Demo hook: the naive run starts with no circles ("can you spot it?") until "Run Forkcast on these travelers".
-  const [revealed, setRevealed] = useState(false);
-  const conceal = mode === "naive" && !revealed;
+  const conceal = false;
   const [hl, setHl] = useState<{ personaId: string; componentId: string } | null>(null);
   const curScreens = cols.map(({ j }) => (j && turn <= j.turns.length - 1 ? j.turns[turn]?.screen : undefined));
   const only = onlyIn(curScreens);
@@ -88,7 +86,7 @@ export function Hero({ file, mode, onMode, queryId, turn, onQuery, onTurn, onOpe
       <header className="hero__head">
         <h1>Same question, three travelers</h1>
         <p className="muted">
-          Forkcast creates digital travelers, lets them ask Getaway’s assistant the same thing, and checks whether the screen each one got actually serves them.
+          Synthetic travelers talk to Getaway’s assistant; it generates every screen; Forkcast runs QA on each turn. The UI converges per traveler, and the flow is derived from their interactions, not drawn up front.
         </p>
       </header>
 
@@ -103,22 +101,10 @@ export function Hero({ file, mode, onMode, queryId, turn, onQuery, onTurn, onOpe
             </button>
           </div>
           <p className="hero-mode__line" data-headline>
-            {mode === "naive" && !revealed
-              ? "They all look fine. Does each one serve the person who asked?"
-              : mode === "naive"
-              ? `Serves the person: ${pct(summarizeServes(file) ?? 0)} · the screens ignore what the assistant knows about them`
-              : `Serves the person: ${pct(summarizeServes(file) ?? 0)} · every screen tailored to what the assistant knows about them`}
+            {mode === "naive"
+              ? `Generic assistant: same screen logic for everyone · fits the person ${pct(summarizeServes(file) ?? 0)}`
+              : `Persona-aware: tuned to what the assistant knows · fits the person ${pct(summarizeServes(file) ?? 0)}`}
           </p>
-          {mode === "naive" && !revealed && (
-            <button className="hero-run" onClick={() => setRevealed(true)} data-run-checks>
-              Run Forkcast on these travelers
-            </button>
-          )}
-          {mode === "naive" && revealed && (
-            <button className="hero-reset" onClick={() => setRevealed(false)} data-reset>
-              Reset
-            </button>
-          )}
         </div>
       )}
 
@@ -170,7 +156,7 @@ export function Hero({ file, mode, onMode, queryId, turn, onQuery, onTurn, onOpe
         </div>
       </div>
 
-      <div className="hero__phones">
+      <div className="hero__phones" style={{ ["--cols" as string]: cols.map(() => "minmax(0, 1fr)").join(" ") }}>
         {cols.map(({ p, j }, i) => (
           <PersonaColumn
             key={p.id}
@@ -262,9 +248,9 @@ interface ColProps {
   onTurn: (i: number) => void;
 }
 
-function PersonaColumn({ p, conceal, naive, color, q, j, turn, clock, explain, highlight, onHighlight, onOpen, onTurn }: ColProps) {
+function PersonaColumn({ p, conceal, color, q, j, turn, clock, explain, highlight, onHighlight, onOpen, onTurn }: ColProps) {
   const [chatRef, chatW] = useWidth<HTMLDivElement>();
-  const desktop = p.context.surface === "fullscreen";
+  const desktop = false; // every traveler shown on a phone for consistency
   const len = j?.turns.length ?? 0;
   const shown = Math.min(turn, len - 1);
   const ended = turn > len - 1;
@@ -281,6 +267,9 @@ function PersonaColumn({ p, conceal, naive, color, q, j, turn, clock, explain, h
   const marks = explain && !ended ? decisionMarks(cur?.screen) : [];
   const [openReason, setOpenReason] = useState<string | null>(null);
   const screenW = Math.max(160, chatW - 24);
+  // Numbered markers on the phone (one per outlined component); the matching text is in the list below.
+  const markNum = new Map<string, number>();
+  for (const c of failing) if (c.componentId && !markNum.has(c.componentId)) markNum.set(c.componentId, markNum.size + 1);
 
   // Keep the newest message in view: the latest user bubble near the top, or the bottom while typing.
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -376,7 +365,7 @@ function PersonaColumn({ p, conceal, naive, color, q, j, turn, clock, explain, h
                         screen={t.screen}
                         width={screenW}
                         failing={last ? failing : visibleFails(t)}
-                        tags={last ? (naive ? "values" : "persona") : false}
+                        tags={last ? "numbered" : false}
                         bare
                         marks={last ? marks : []}
                         highlight={last ? highlight : null}
@@ -480,6 +469,9 @@ function PersonaColumn({ p, conceal, naive, color, q, j, turn, clock, explain, h
                   <li key={contract.id} className={check ? (check.ok ? "is-ok" : "is-bad") : "is-na"} data-contract={contract.id}>
                     <button onClick={() => setOpenReason(open ? null : contract.id)} title={reason} aria-expanded={open}>
                       <span className="hero-serves__mark" aria-hidden="true">{check ? (check.ok ? "✓" : "✗") : "–"}</span>
+                      {check && !check.ok && check.componentId && markNum.has(check.componentId) && (
+                        <span className="jr-circle__num jr-circle__num--static" title="Outlined on the screen above">{markNum.get(check.componentId)}</span>
+                      )}
                       <span>{contract.label}</span>
                       {check?.source === "judge" && <span className="hero-serves__judge" title="Scored by the Gemini judge">judge</span>}
                     </button>

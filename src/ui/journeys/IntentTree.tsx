@@ -73,7 +73,7 @@ type HeroData = Geo & {
 type FlowEdge = Edge<FlowData, "flow">;
 type HeroEdge = Edge<HeroData, "hero">;
 
-const COL = 250;
+const COL = 320;
 const ANCHOR_Y = 20; // edges attach at the node header, so nodes of different heights still line up
 const DOT_MS = 450;
 

@@ -19,7 +19,7 @@ interface Props {
   /** Failing checks; each one with a componentId gets circled (red; amber for persona contracts). */
   failing: CheckResult[];
   /** Show the label tag next to each circle: true = all, "persona" = persona contracts only, false = none. */
-  tags?: boolean | "persona" | "values";
+  tags?: boolean | "persona" | "values" | "numbered";
   /** Embed without device chrome (chat bubble). */
   bare?: boolean;
   /** Numbered decision tags (Explain mode). */
@@ -28,7 +28,7 @@ interface Props {
   highlight?: string | null;
 }
 
-type Circle = Rect & { key: string; label: string; persona: boolean };
+type Circle = Rect & { key: string; label: string; persona: boolean; num: number };
 type Placed = Rect & { key: string; mark?: Mark; hl?: boolean };
 
 /** "[judge] Seat-together status is shown: reason" → "Seat-together status is shown". */
@@ -59,6 +59,8 @@ export function CircledScreen({ screen, width, mode = "thumb", failing, tags = t
       const rects = componentRects(frame);
       const at = (id: string) => rects.find((x) => x.id === id);
       const next: Circle[] = [];
+      const nums = new Map<string, number>();
+      for (const c of targets) if (!nums.has(c.componentId!)) nums.set(c.componentId!, nums.size + 1);
       targets.forEach((c, i) => {
         const r = at(c.componentId!);
         const persona = c.kind === "persona";
@@ -66,7 +68,7 @@ export function CircledScreen({ screen, width, mode = "thumb", failing, tags = t
         // Several persona contracts on one component share one amber circle and one tag.
         const same = persona ? next.find((x) => x.persona && x.key.startsWith(`${c.componentId}-`)) : undefined;
         if (same) same.label = `${same.label} · ${label}`;
-        else if (r) next.push({ x: r.x, y: r.y, w: r.w, h: r.h, key: `${c.componentId}-${i}`, label, persona });
+        else if (r) next.push({ x: r.x, y: r.y, w: r.w, h: r.h, key: `${c.componentId}-${i}`, label, persona, num: nums.get(c.componentId!)! });
       });
       const nextPlaced: Placed[] = [];
       for (const m of marks) {
@@ -102,6 +104,7 @@ export function CircledScreen({ screen, width, mode = "thumb", failing, tags = t
       <ScreenFrame screen={screen} width={width} mode={mode} bare={bare} />
       {circles.map((c) => (
         <div key={c.key} className={`jr-circle${c.persona ? " jr-circle--persona" : ""}`} style={box(c)} data-circle={c.key} data-circle-kind={c.persona ? "persona" : "check"}>
+          {tags === "numbered" && <span className="jr-circle__num" title={c.label}>{c.num}</span>}
           {(tags === true || tags === "values" || (tags === "persona" && c.persona)) && <span className={`jr-circle__tag${c.y > 0.8 ? " is-above" : ""}`}>{c.label}</span>}
         </div>
       ))}

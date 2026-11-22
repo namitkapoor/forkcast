@@ -121,7 +121,7 @@
 .tp-cell--ok:hover { background: color-mix(in srgb, var(--ok) 40%, transparent); }
 .tp-cell--bad { background: var(--bad); }
 .tp-cell--bad:hover { background: color-mix(in srgb, var(--bad) 80%, white); }
-.tp-cell--none { background: transparent; box-shadow: inset 0 0 0 1px var(--border); }
+.tp-cell--none { background: transparent; box-shadow: inset 0 0 0 1px var(--border-strong); }
 .tp-cell--none:hover { box-shadow: inset 0 0 0 1px var(--border-strong); }
 .tp-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tp-cell--sw { width: 14px; height: 12px; border-radius: 3px; cursor: default; display: inline-block; }
@@ -152,3 +152,33 @@
   .tp-session { align-items: flex-start; }
   .tp-mx-label { display: inline-block; max-width: 140px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 }
+
+/* Persona matrix */
+.tp-caption { margin: -4px 16px 10px; font-size: 12px; }
+.tp-seg { margin-right: auto; display: inline-flex; padding: 2px; border-radius: 8px; background: var(--surface-2, rgba(127,127,127,0.12)); gap: 2px; }
+.tp-seg button { all: unset; cursor: pointer; padding: 4px 10px; border-radius: 6px; font-size: 12px; color: var(--text-2); }
+.tp-seg button.is-on { background: var(--panel); color: var(--text); box-shadow: 0 0 0 1px var(--border-strong); font-weight: 600; }
+.tp-seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tp-mx-icol { vertical-align: bottom; padding: 0 0 6px; text-align: center !important; font-size: 11.5px; min-width: 56px; }
+.tp-mx-person { padding: 6px 16px 6px 0; }
+.tp-mx-person { display: flex; align-items: center; gap: 10px; }
+.tp-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex: none; background: var(--border); }
+.tp-person { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tp-person-name { color: var(--text); font-weight: 600; font-size: 13px; }
+.tp-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.tp-tag { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--border); color: var(--text-2); font-size: 11px; font-weight: 400; white-space: nowrap; }
+.tp-cell--wide { width: 56px; height: 34px; cursor: default; display: flex; align-items: center; justify-content: center; color: #fff; font: 700 11px/1 var(--sans, inherit); }
+@media (max-width: 760px) {
+  .tp-tags { max-width: 190px; gap: 3px; }
+  .tp-tag { font-size: 10px; padding: 0 4px; }
+  .tp-avatar { width: 28px; height: 28px; }
+  .tp-mx-person { white-space: normal; }
+}
+
+/* Persona matrix drill-down: cells and rows open the persona flow. */
+.tp-cell--none { cursor: default; }
+.tp-cell.is-link { cursor: pointer; }
+.tp-cell.is-link:hover { box-shadow: 0 0 0 2px var(--accent); }
+.tp-mx-person.is-link { cursor: pointer; border-radius: 10px; margin-left: -6px; padding-left: 6px; transition: background-color 100ms ease, box-shadow 100ms ease; }
+.tp-mx-person.is-link:hover { background: var(--surface-2); box-shadow: 0 0 0 1px var(--border-strong); }
+.tp-mx-person.is-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

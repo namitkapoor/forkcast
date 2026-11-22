@@ -1,14 +1,18 @@
-import { GoogleGenAI, type ContentListUnion } from "@google/genai";
+import { GoogleGenAI, type ContentListUnion, type ThinkingConfig } from "@google/genai";
+import { loadDotEnv } from "./env.js";
 import { buildThinkingConfig, type ThinkingLevelSetting } from "./models.js";
 
 let client: GoogleGenAI | undefined;
 
-export function getClient(): GoogleGenAI {
+export function getGeminiClient(): GoogleGenAI {
+  if (!process.env.GEMINI_API_KEY?.trim()) loadDotEnv();
   const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) throw new HttpError(500, "GEMINI_API_KEY is not set on the server");
+  if (!apiKey) throw new HttpError(500, "GEMINI_API_KEY is not set on the server (expected in .env)");
   client ??= new GoogleGenAI({ apiKey });
   return client;
 }
+
+export const getClient = getGeminiClient;
 
 /** Error carrying an HTTP status for route handlers. */
 export class HttpError extends Error {
@@ -45,9 +49,13 @@ export interface JsonCallOptions {
   system: string;
   prompt: string;
   temperature?: number;
+  /** Reasoning level shortcut (converted via buildThinkingConfig). */
   thinkingLevel?: ThinkingLevelSetting;
+  /** Explicit ThinkingConfig sourced from config.yaml. */
+  thinkingConfig?: ThinkingConfig;
+  /** Optional multimodal inline media (e.g. Paint & Speak region mask PNG). */
   inlineMedia?: InlineMediaPart[];
-  /** Per-attempt timeout. */
+  /** Per-attempt timeout (automatically raised to CARBON_TIMEOUT_MS when using gemini-4-carbon). */
   timeoutMs?: number;
   /** Retries on 429 / 5xx / network errors (exponential backoff). Timeouts are not retried. */
   retries?: number;
@@ -115,16 +123,16 @@ async function once(opts: JsonCallOptions): Promise<{ text: string; usage: Token
           ]
         : opts.prompt;
 
-    const thinkingConfig = buildThinkingConfig(opts.model, opts.thinkingLevel);
+    const resolvedThinking = opts.thinkingConfig ?? buildThinkingConfig(opts.model, opts.thinkingLevel);
     const res = await Promise.race([
-      getClient().models.generateContent({
+      getGeminiClient().models.generateContent({
         model: opts.model,
         contents,
         config: {
           systemInstruction: opts.system,
           responseMimeType: "application/json",
           temperature: opts.temperature,
-          ...(thinkingConfig ? { thinkingConfig } : {}),
+          ...(resolvedThinking ? { thinkingConfig: resolvedThinking } : {}),
           abortSignal: ctrl.signal,
         },
       }),

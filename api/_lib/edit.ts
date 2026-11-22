@@ -3,7 +3,7 @@ import { A2UI_VERSION, BASIC_CATALOG_ID, type A2uiMessage, type Screen } from ".
 import { catalogPromptSummary, validateMessages } from "../../src/a2ui/validate.js";
 import { callJson, CARBON_TIMEOUT_MS, HttpError, isCarbonModel, TimeoutError, type InlineMediaPart } from "./gemini.js";
 import { getAt, getComponents, getDataModel, lintBindings, pinSurfaceId, screenToText } from "./dataModel.js";
-import { models, taskConfigs } from "./models.js";
+import { getLlmConfig, taskConfigs, type ResolvedLlmConfig } from "./models.js";
 
 // Edits an existing A2UI screen from a chat instruction, @Pin/@Mask feedback, and optional Paint mask PNG.
 // Same shape as screen.ts: task-routed model with fallback, validate, one repair round, then guardrails.
@@ -121,9 +121,11 @@ export async function editScreen(req: EditScreenRequest, budgetMs = 55_000): Pro
 
   const t0 = Date.now();
   const useCorePolicy = inlineMedia.length > 0 || annotations.length >= 2;
+  const primaryCfg = getLlmConfig(useCorePolicy ? "editorCore" : "editor");
   const primaryTask = useCorePolicy ? taskConfigs.editCore : taskConfigs.editSmall;
+  const fallbackCfg = getLlmConfig("generatorFallback");
   const effectiveBudgetMs =
-    isCarbonModel(primaryTask.model) || isCarbonModel(models.generatorFallback)
+    isCarbonModel(primaryCfg.model) || isCarbonModel(fallbackCfg.model)
       ? Math.max(budgetMs, CARBON_TIMEOUT_MS + 35_000)
       : budgetMs;
   const remaining = () => effectiveBudgetMs - (Date.now() - t0);
@@ -174,29 +176,30 @@ export async function editScreen(req: EditScreenRequest, budgetMs = 55_000): Pro
     }
   };
 
-  let first: { data: ModelEdit; model: string; raw: string } | undefined;
-  const candidates = [primaryTask.model, ...(models.generatorFallback !== primaryTask.model ? [models.generatorFallback] : [])];
-  for (const model of candidates) {
-    const modelCap = isCarbonModel(model) ? CARBON_TIMEOUT_MS : model === primaryTask.model ? 36_000 : remaining() - 2000;
+  let first: { data: ModelEdit; model: string; raw: string; cfg: ResolvedLlmConfig } | undefined;
+  const candidates = [primaryCfg, ...(fallbackCfg.model !== primaryCfg.model ? [fallbackCfg] : [])];
+  for (const cfg of candidates) {
+    const modelCap = isCarbonModel(cfg.model) ? CARBON_TIMEOUT_MS : cfg === primaryCfg ? cfg.timeoutMs : remaining() - 2000;
     const timeoutMs = Math.min(modelCap, remaining() - 2000);
     if (timeoutMs < 4000) break;
     try {
       const r = await callJson<ModelEdit>({
-        model,
+        model: cfg.model,
         system,
         prompt,
-        temperature: 0.3,
-        thinkingLevel: model === primaryTask.model ? primaryTask.thinkingLevel : undefined,
+        temperature: cfg.temperature ?? 0.3,
+        thinkingLevel: cfg === primaryCfg ? primaryTask.thinkingLevel : undefined,
+        thinkingConfig: cfg === primaryCfg ? undefined : cfg.thinkingConfig,
         inlineMedia: inlineMedia.length ? inlineMedia : undefined,
         timeoutMs,
-        retries: 2,
+        retries: cfg.retries,
       });
-      attempts.push({ model, ms: r.ms, ok: true });
+      attempts.push({ model: cfg.model, ms: r.ms, ok: true });
       accumulateUsage(r.usage);
-      first = r;
+      first = { ...r, cfg };
       break;
     } catch (e) {
-      attempts.push({ model, ms: 0, ok: false, error: e instanceof TimeoutError ? "timeout" : String((e as Error)?.message ?? e).slice(0, 200) });
+      attempts.push({ model: cfg.model, ms: 0, ok: false, error: e instanceof TimeoutError ? "timeout" : String((e as Error)?.message ?? e).slice(0, 200) });
     }
   }
   if (!first) throw new HttpError(502, "screen edit failed", attempts);
@@ -216,7 +219,7 @@ export async function editScreen(req: EditScreenRequest, budgetMs = 55_000): Pro
         model: first.model,
         system,
         prompt: repairPrompt,
-        temperature: 0.2,
+        temperature: first.cfg.repairTemperature ?? 0.2,
         thinkingLevel: "LOW",
         timeoutMs: remaining() - 1000,
         retries: 1,

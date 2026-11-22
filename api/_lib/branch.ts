@@ -3,7 +3,7 @@ import type { StateNode, Transition, TransitionKind } from "../../src/graph/type
 import { callJson, CARBON_TIMEOUT_MS, HttpError, isCarbonModel } from "./gemini.js";
 import { getDataModel, screenToText } from "./dataModel.js";
 import { generateScreen } from "./screen.js";
-import { models } from "./models.js";
+import { getLlmConfig, models } from "./models.js";
 
 const KINDS: TransitionKind[] = ["next", "back", "refine", "digress", "error", "abandon"];
 const CARRY_KEYS = ["flightId", "price", "currency", "pax", "fareSource", "trip"];
@@ -36,8 +36,9 @@ export async function branch(req: BranchRequest, budgetMs = 55_000): Promise<Bra
   }
   const t0 = Date.now();
   const { fromScreen, fromNode, utterance } = req;
+  const planCfg = getLlmConfig("branchPlanner");
   const plan = await callJson<Plan>({
-    model: models.simulator,
+    model: planCfg.model,
     system: PLAN_SYSTEM,
     prompt: [
       `Current node: ${JSON.stringify(fromNode)}`,
@@ -45,9 +46,10 @@ export async function branch(req: BranchRequest, budgetMs = 55_000): Promise<Bra
       `Current screen:\n${screenToText(fromScreen.messages)}`,
       `Utterance: "${utterance}"`,
     ].join("\n\n"),
-    temperature: 0.4,
-    timeoutMs: 15_000,
-    retries: 2,
+    temperature: planCfg.temperature,
+    thinkingConfig: planCfg.thinkingConfig,
+    timeoutMs: planCfg.timeoutMs,
+    retries: planCfg.retries,
   }).catch((e) => {
     throw new HttpError(502, `branch planning failed: ${(e as Error).message}`);
   });

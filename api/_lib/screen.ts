@@ -3,7 +3,7 @@ import { catalogPromptSummary, validateMessages } from "../../src/a2ui/validate.
 import type { Context, StateNode } from "../../src/graph/types.js";
 import { callJson, CARBON_TIMEOUT_MS, HttpError, isCarbonModel, TimeoutError } from "./gemini.js";
 import { getDataModel, lintBindings, pinSurfaceId } from "./dataModel.js";
-import { models } from "./models.js";
+import { getLlmConfig, type ResolvedLlmConfig } from "./models.js";
 
 export interface ScreenInput {
   node: StateNode;
@@ -99,7 +99,9 @@ export async function generateScreen(input: ScreenInput, opts: GenerateOptions =
   if (!input?.node?.id || !input.node.stage) throw new HttpError(400, "node with id and stage is required");
   const id = opts.id ?? `${input.node.id}-${slug()}`;
   const carry = input.carry ?? {};
-  const usesCarbon = isCarbonModel(models.generator) || isCarbonModel(models.generatorFallback);
+  const primaryCfg = getLlmConfig("generator");
+  const fallbackCfg = getLlmConfig("generatorFallback");
+  const usesCarbon = isCarbonModel(primaryCfg.model) || isCarbonModel(fallbackCfg.model);
   const defaultBudget = usesCarbon ? CARBON_TIMEOUT_MS + 35_000 : 55_000;
   const deadline = Date.now() + Math.max(opts.budgetMs ?? defaultBudget, usesCarbon ? CARBON_TIMEOUT_MS + 20_000 : 0);
   const remaining = () => deadline - Date.now();
@@ -108,24 +110,32 @@ export async function generateScreen(input: ScreenInput, opts: GenerateOptions =
   const prompt = buildScreenPrompt(input, id);
 
   // 1. Primary model, falling back once on error or timeout.
-  let first: { data: ModelScreen; model: string; raw: string } | undefined;
-  for (const model of [models.generator, models.generatorFallback]) {
-    const primaryCap = isCarbonModel(model) ? CARBON_TIMEOUT_MS : (opts.primaryTimeoutMs ?? 30_000);
-    const timeoutMs = Math.min(model === models.generator ? primaryCap : isCarbonModel(model) ? CARBON_TIMEOUT_MS : remaining(), remaining());
+  let first: { data: ModelScreen; model: string; raw: string; cfg: ResolvedLlmConfig } | undefined;
+  for (const cfg of [primaryCfg, fallbackCfg]) {
+    const primaryCap = isCarbonModel(cfg.model) ? CARBON_TIMEOUT_MS : (opts.primaryTimeoutMs ?? cfg.timeoutMs);
+    const timeoutMs = Math.min(cfg === primaryCfg ? primaryCap : isCarbonModel(cfg.model) ? CARBON_TIMEOUT_MS : remaining(), remaining());
     if (timeoutMs < 3000) break;
     try {
-      const r = await callJson<ModelScreen>({ model, system, prompt, temperature: 0.8, timeoutMs, retries: 3 });
-      attempts.push({ model, ms: r.ms, ok: true });
-      first = r;
+      const r = await callJson<ModelScreen>({
+        model: cfg.model,
+        system,
+        prompt,
+        temperature: cfg.temperature ?? 0.8,
+        thinkingConfig: cfg.thinkingConfig,
+        timeoutMs,
+        retries: cfg.retries,
+      });
+      attempts.push({ model: cfg.model, ms: r.ms, ok: true });
+      first = { ...r, cfg };
       break;
     } catch (e) {
-      attempts.push({ model, ms: 0, ok: false, error: e instanceof TimeoutError ? "timeout" : String((e as Error)?.message ?? e).slice(0, 200) });
+      attempts.push({ model: cfg.model, ms: 0, ok: false, error: e instanceof TimeoutError ? "timeout" : String((e as Error)?.message ?? e).slice(0, 200) });
     }
   }
   if (!first) throw new HttpError(502, "screen generation failed", attempts);
 
   let out = first.data;
-  let usedModel = first.model;
+  const usedModel = first.model;
   let res = check(out, id, carry);
   let repaired = false;
 
@@ -143,7 +153,15 @@ export async function generateScreen(input: ScreenInput, opts: GenerateOptions =
       `Return the corrected full JSON object (same shape). Fix every problem; keep the layout otherwise.`,
     ].join("\n");
     try {
-      const r = await callJson<ModelScreen>({ model: usedModel, system, prompt: repairPrompt, temperature: 0.3, timeoutMs: remaining(), retries: 2 });
+      const r = await callJson<ModelScreen>({
+        model: usedModel,
+        system,
+        prompt: repairPrompt,
+        temperature: first.cfg.repairTemperature ?? 0.3,
+        thinkingConfig: first.cfg.thinkingConfig,
+        timeoutMs: remaining(),
+        retries: Math.min(2, first.cfg.retries),
+      });
       attempts.push({ model: usedModel, ms: r.ms, ok: true });
       const res2 = check(r.data, id, carry);
       if (res2.a2ui.length <= res.a2ui.length) {

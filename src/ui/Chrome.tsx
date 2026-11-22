@@ -28,6 +28,8 @@ export interface TopBarProps {
   subtitle: string;
   page: Page;
   onPage: (p: Page) => void;
+  onOpenCanvas?: () => void;
+  canvasOn?: boolean;
   playTraffic: boolean;
   onPlayTraffic: (v: boolean) => void;
   onPlayMode?: () => void;
@@ -97,7 +99,7 @@ export function TopBar(p: TopBarProps) {
                 </>
               ) : null}
               <div className="menu__label">Advanced</div>
-              {item(p.page === "flow" ? "Flow canvas ✓" : "Flow canvas", "", () => p.onPage("flow"))}
+              {item(p.canvasOn ? "Flow canvas ✓" : "Flow canvas", "", () => (p.onOpenCanvas ? p.onOpenCanvas() : p.onPage("flow")))}
               {item(p.page === "tests" ? "Invariant tests ✓" : "Invariant tests", "", () => p.onPage("tests"))}
             </div>
           )}
@@ -110,11 +112,13 @@ export function TopBar(p: TopBarProps) {
       </div>
 
       <div className="topbar__mid">
-        {advanced && (
-          <button className="btn btn--ghost" onClick={() => p.onPage("journeys")} title="Back to the journeys page">
-            ← Journeys
-          </button>
-        )}
+        <nav className="seg" aria-label="Pages">
+          {([["journeys", "Journeys"], ["flow", "Flows"], ["tests", "Tests"]] as const).map(([id, label]) => (
+            <button key={id} className={p.page === id ? "is-on" : ""} aria-current={p.page === id ? "page" : undefined} onClick={() => p.onPage(id)}>
+              {label}
+            </button>
+          ))}
+        </nav>
       </div>
 
       <div className="topbar__right">

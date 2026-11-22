@@ -6,7 +6,7 @@ import { INTENTS, type Ingredients, type Intent, type Persona, type Query } from
 import { screenToText } from "./dataModel.js";
 import { derivedTools, withConditions } from "./journeyProfiles.js";
 import { callJson } from "./gemini.js";
-import { models } from "./models.js";
+import { getLlmConfig } from "./models.js";
 
 export type ToolResult = Ingredients["toolResults"][number];
 
@@ -56,13 +56,15 @@ export async function personaStep(
     `Screen the assistant just showed you:\n${screenToText(screen.messages, 50) || "(empty)"}`,
     `This is turn ${turnIndex + 1} of at most ${maxTurns}; you have little patience for detours.`,
   ].join("\n\n");
+  const simCfg = getLlmConfig("simulator");
   const r = await call<{ action?: unknown; userAction?: unknown; userMessage?: unknown; reason?: unknown }>("persona", {
-    model: models.simulator,
+    model: simCfg.model,
     system: PERSONA_SYSTEM,
     prompt,
-    temperature: 0.9,
-    timeoutMs: 30_000,
-    retries: 6,
+    temperature: simCfg.temperature ?? 0.9,
+    thinkingConfig: simCfg.thinkingConfig,
+    timeoutMs: Math.max(simCfg.timeoutMs, 30_000),
+    retries: Math.max(simCfg.retries, 6),
   });
   const d = r.data ?? {};
   const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
@@ -169,13 +171,15 @@ export async function planTurn(input: PlanInput, journeyId: string, call: JsonCa
     .filter(Boolean)
     .join("\n\n");
 
+  const asstCfg = getLlmConfig("journeyAssistant");
   const r = await call<{ intent?: unknown; refine?: unknown; selectFlightId?: unknown }>("assistant", {
-    model: models.journeyAssistant,
+    model: asstCfg.model,
     system: ASSISTANT_SYSTEM,
     prompt,
-    temperature: 0.2,
-    timeoutMs: 30_000,
-    retries: 6,
+    temperature: asstCfg.temperature ?? 0.2,
+    thinkingConfig: asstCfg.thinkingConfig,
+    timeoutMs: asstCfg.timeoutMs,
+    retries: asstCfg.retries,
   });
   const d = r.data ?? {};
   let intent: Intent = (INTENTS as readonly string[]).includes(String(d.intent)) ? (d.intent as Intent) : "other";

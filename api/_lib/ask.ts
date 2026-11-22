@@ -1,7 +1,7 @@
 import type { AskRequest, AskResponse } from "../../src/lib/api.js";
 import { callJson, HttpError } from "./gemini.js";
 import { screenToText } from "./dataModel.js";
-import { models } from "./models.js";
+import { getLlmConfig } from "./models.js";
 
 // Short answers about a Forkcast run, for the chat panel when nothing editable is selected.
 
@@ -29,7 +29,16 @@ export async function ask(req: AskRequest): Promise<AskResponse> {
   ]
     .filter(Boolean)
     .join("\n\n");
-  const r = await callJson<{ answer?: unknown }>({ model: models.assistant, system: SYSTEM, prompt, temperature: 0.3, timeoutMs: 20_000, retries: 2 }).catch((e) => {
+  const cfg = getLlmConfig("assistant");
+  const r = await callJson<{ answer?: unknown }>({
+    model: cfg.model,
+    system: SYSTEM,
+    prompt,
+    temperature: cfg.temperature,
+    thinkingConfig: cfg.thinkingConfig,
+    timeoutMs: cfg.timeoutMs,
+    retries: cfg.retries,
+  }).catch((e) => {
     throw new HttpError(502, `ask failed: ${(e as Error).message}`);
   });
   const answer = typeof r.data?.answer === "string" ? r.data.answer.trim() : "";
