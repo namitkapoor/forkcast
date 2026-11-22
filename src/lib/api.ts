@@ -1,8 +1,17 @@
 import type { Context, NodeId, StateNode, Transition, TransitionKind } from "../graph/types";
-import type { A2uiMessage, Screen } from "../a2ui/types";
+import type { A2uiMessage, AnnotationKind, Screen } from "../a2ui/types";
 
 // Client for the serverless routes in /api. The Gemini key never reaches the browser.
 // Request/response shapes here are the contract; api/* implements them.
+
+export interface TokenUsage {
+  model: string;
+  thinkingLevel?: "LOW" | "MEDIUM" | "HIGH" | "XHIGH";
+  promptTokens: number;
+  outputTokens: number;
+  thoughtTokens: number;
+  totalTokens: number;
+}
 
 export interface GenerateScreenRequest {
   nodeId: NodeId;
@@ -26,6 +35,7 @@ export interface BranchResponse {
   node: StateNode;
   transition: Transition;
   screen: Screen;
+  usage?: TokenUsage;
 }
 
 export interface SimulateStepRequest {
@@ -45,13 +55,29 @@ export interface SimulateStepResponse {
   reason: string;
 }
 
+export interface EditAnnotationContext {
+  id: string;
+  token: string;
+  kind: AnnotationKind;
+  text: string;
+  componentId?: string;
+  intersectingIds?: string[];
+  maskDataUrl?: string;
+}
+
 export interface EditScreenRequest {
   /** The version being edited (its messages are the starting point). */
   screen: Screen;
-  /** Components the user lassoed; empty = the instruction applies to the whole screen. */
+  /** Components the user lassoed or painted; empty = the instruction applies to the whole screen. */
   componentIds: string[];
   /** What to change, e.g. "make the total bigger and show per-traveler price". */
   instruction: string;
+  /** Included @Pin / @Mask annotations resolved for this edit. */
+  annotations?: EditAnnotationContext[];
+  /** Optional direct composite PNG mask data URL from a Paint & Speak edit. */
+  maskDataUrl?: string;
+  /** Compact summary of referenced sibling screens/steps if @mentioned. */
+  referencedContext?: string;
 }
 
 export interface EditScreenResponse {
@@ -63,7 +89,10 @@ export interface EditScreenResponse {
   changed: string[];
   /** Guardrail notes left after repair (e.g. a carried value moved). */
   warnings: string[];
+  /** Annotation ids addressed by this edit so the UI can mark them resolved. */
+  resolvedAnnotationIds?: string[];
   attempts: { model: string; ms: number; ok: boolean; error?: string }[];
+  usage?: TokenUsage;
 }
 
 export interface AskRequest {
@@ -74,6 +103,8 @@ export interface AskRequest {
   failingEdges: { edge: string; count: number; example: string }[];
   /** When a screen is selected, its messages, so answers can cite what it shows. */
   screen?: { variant: string; messages: A2uiMessage[] };
+  /** Optional included @Pin / @Mask / @Screen notes referenced in the question. */
+  referencedContext?: string;
   /** Recent chat turns for follow-ups. */
   history?: { role: "user" | "assistant"; text: string }[];
 }
@@ -81,17 +112,123 @@ export interface AskRequest {
 export interface AskResponse {
   answer: string;
   model: string;
+  usage?: TokenUsage;
 }
 
-async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+export interface TranscribeRequest {
+  /** Base64-encoded audio payload (without data URL prefix). */
+  audioBase64: string;
+  mimeType: string;
+}
+
+export interface TranscribeResponse {
+  transcript: string;
+  model: string;
+  usage?: TokenUsage;
+}
+
+export type DisambiguationControl =
+  | {
+      id: string;
+      kind: "choice-cards";
+      label: string;
+      options: { id: string; title: string; subtitle: string; badge?: string }[];
+      selectedId: string;
+    }
+  | {
+      id: string;
+      kind: "chips";
+      label: string;
+      options: string[];
+      selected: string[];
+    }
+  | {
+      id: string;
+      kind: "slider";
+      label: string;
+      min: number;
+      max: number;
+      step: number;
+      unit: string;
+      value: number;
+    };
+
+export interface DisambiguationRequestPayload {
+  prompt: string;
+  scope: "screen" | "node" | "edge" | "run";
+  nodeLabel?: string;
+  screenVariant?: string;
+}
+
+export interface DisambiguationResponse {
+  ambiguous: boolean;
+  uncertaintyScore: number;
+  rationale: string;
+  controls: DisambiguationControl[];
+  usage?: TokenUsage;
+}
+
+import type { CriticEffort, CriticModelId } from "./criticModels.js";
+
+export interface CritiqueScreenRequest {
+  screen: Screen;
+  nodeLabel: string;
+  stage: string;
+  contracts?: string[];
+  model?: CriticModelId;
+  thinkingLevel?: CriticEffort;
+}
+
+export interface CritiquePin {
+  componentId?: string;
+  kind: "bug" | "rule" | "note";
+  text: string;
+}
+
+export interface UxEvaluationReport {
+  overallScore: number;
+  dimensions: {
+    usability: number;
+    hierarchy: number;
+    accessibility: number;
+    continuity: number;
+  };
+  summary: string;
+  pins: CritiquePin[];
+  model: string;
+  thinkingLevel?: CriticEffort;
+  evaluatedAt: string;
+}
+
+export interface CritiqueScreenResponse {
+  report: UxEvaluationReport;
+  usage?: TokenUsage;
+}
+
+export interface RequestOptions {
+  signal?: AbortSignal;
+}
+
+async function post<T>(path: string, body: unknown, opts?: RequestOptions): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal: opts?.signal,
+  });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((json as { error?: string }).error ?? `${path} failed (${res.status})`);
   return json as T;
 }
 
-export const generateScreen = (req: GenerateScreenRequest) => post<{ screen: Screen }>("/api/generate-screen", req).then((r) => r.screen);
-export const branchFromScreen = (req: BranchRequest) => post<BranchResponse>("/api/branch", req);
-export const simulateStep = (req: SimulateStepRequest) => post<SimulateStepResponse>("/api/simulate-step", req);
-export const editScreen = (req: EditScreenRequest) => post<EditScreenResponse>("/api/edit-screen", req);
-export const askForkcast = (req: AskRequest) => post<AskResponse>("/api/ask", req);
+export const generateScreen = (req: GenerateScreenRequest, opts?: RequestOptions) =>
+  post<{ screen: Screen }>("/api/generate-screen", req, opts).then((r) => r.screen);
+export const branchFromScreen = (req: BranchRequest, opts?: RequestOptions) => post<BranchResponse>("/api/branch", req, opts);
+export const simulateStep = (req: SimulateStepRequest, opts?: RequestOptions) => post<SimulateStepResponse>("/api/simulate-step", req, opts);
+export const editScreen = (req: EditScreenRequest, opts?: RequestOptions) => post<EditScreenResponse>("/api/edit-screen", req, opts);
+export const askForkcast = (req: AskRequest, opts?: RequestOptions) => post<AskResponse>("/api/ask", req, opts);
+export const transcribeAudio = (req: TranscribeRequest, opts?: RequestOptions) => post<TranscribeResponse>("/api/transcribe", req, opts);
+export const assessDisambiguation = (req: DisambiguationRequestPayload, opts?: RequestOptions) =>
+  post<DisambiguationResponse>("/api/disambiguate", req, opts);
+export const critiqueScreen = (req: CritiqueScreenRequest, opts?: RequestOptions) =>
+  post<CritiqueScreenResponse>("/api/critique-screen", req, opts);

@@ -1,7 +1,7 @@
 import { A2UI_VERSION, BASIC_CATALOG_ID, type A2uiMessage, type Screen } from "../../src/a2ui/types.js";
 import { catalogPromptSummary, validateMessages } from "../../src/a2ui/validate.js";
 import type { Context, StateNode } from "../../src/graph/types.js";
-import { callJson, HttpError, TimeoutError } from "./gemini.js";
+import { callJson, CARBON_TIMEOUT_MS, HttpError, isCarbonModel, TimeoutError } from "./gemini.js";
 import { getDataModel, lintBindings, pinSurfaceId } from "./dataModel.js";
 import { getLlmConfig, type ResolvedLlmConfig } from "./models.js";
 
@@ -99,18 +99,21 @@ export async function generateScreen(input: ScreenInput, opts: GenerateOptions =
   if (!input?.node?.id || !input.node.stage) throw new HttpError(400, "node with id and stage is required");
   const id = opts.id ?? `${input.node.id}-${slug()}`;
   const carry = input.carry ?? {};
-  const deadline = Date.now() + (opts.budgetMs ?? 55_000);
+  const primaryCfg = getLlmConfig("generator");
+  const fallbackCfg = getLlmConfig("generatorFallback");
+  const usesCarbon = isCarbonModel(primaryCfg.model) || isCarbonModel(fallbackCfg.model);
+  const defaultBudget = usesCarbon ? CARBON_TIMEOUT_MS + 35_000 : 55_000;
+  const deadline = Date.now() + Math.max(opts.budgetMs ?? defaultBudget, usesCarbon ? CARBON_TIMEOUT_MS + 20_000 : 0);
   const remaining = () => deadline - Date.now();
   const attempts: GenerateResult["attempts"] = [];
   const system = SYSTEM();
   const prompt = buildScreenPrompt(input, id);
 
   // 1. Primary model, falling back once on error or timeout.
-  const primaryCfg = getLlmConfig("generator");
-  const fallbackCfg = getLlmConfig("generatorFallback");
   let first: { data: ModelScreen; model: string; raw: string; cfg: ResolvedLlmConfig } | undefined;
   for (const cfg of [primaryCfg, fallbackCfg]) {
-    const timeoutMs = Math.min(cfg === primaryCfg ? (opts.primaryTimeoutMs ?? cfg.timeoutMs) : remaining(), remaining());
+    const primaryCap = isCarbonModel(cfg.model) ? CARBON_TIMEOUT_MS : (opts.primaryTimeoutMs ?? cfg.timeoutMs);
+    const timeoutMs = Math.min(cfg === primaryCfg ? primaryCap : isCarbonModel(cfg.model) ? CARBON_TIMEOUT_MS : remaining(), remaining());
     if (timeoutMs < 3000) break;
     try {
       const r = await callJson<ModelScreen>({
@@ -132,7 +135,7 @@ export async function generateScreen(input: ScreenInput, opts: GenerateOptions =
   if (!first) throw new HttpError(502, "screen generation failed", attempts);
 
   let out = first.data;
-  let usedModel = first.model;
+  const usedModel = first.model;
   let res = check(out, id, carry);
   let repaired = false;
 

@@ -9,8 +9,8 @@ import { componentRects } from "../a2ui/componentRects";
 import { useCanvas, type Picked } from "./context";
 import { setHover } from "./hoverStore";
 import { ScreenOverlay } from "./ScreenOverlay";
-import { COL_GAP, MORE_H, THUMB_H, THUMB_W, slotOffset, visibleScreens, type SectionSize } from "./geometry";
-import { IconDevice, IconPerson } from "../ui/icons";
+import { COL_GAP, MORE_H, THUMB_W, THUMB_H, slotOffset, visibleScreens, type SectionSize } from "./geometry";
+import { IconCrown, IconDevice, IconPerson } from "../ui/icons";
 
 export type SectionData = {
   state: StateNode;
@@ -29,7 +29,7 @@ export type SectionData = {
 
 export type SectionFlowNode = Node<SectionData, "section">;
 
-/** Screens become interactive (hover boxes, picking, lasso) once they're this large on screen. */
+/** Screens become interactive (hover boxes, picking, lasso, paint mask) once they're this large on screen. */
 export const LIVE_ZOOM = 0.7;
 
 const useZoom = () => useViewportStore((s) => Math.max(0.05, s.transform[2]));
@@ -132,8 +132,9 @@ function Slots({ screens, nodeId, stats, size, zoom }: { screens: Screen[]; node
 }
 
 function Slot({ screen, nodeId, live, selected, zoom }: { screen: Screen; nodeId: string; live: boolean; selected: boolean; zoom: number }) {
-  const { tool, picks, shown: shownOf, selectScreen, setPicks, startDraft, onScreenAction } = useCanvas();
+  const { tool, picks, shown: shownOf, isFinalized, selectScreen, setPicks, startDraft, onScreenAction } = useCanvas();
   const shown = shownOf(screen);
+  const finalized = isFinalized?.(screen.id) ?? false;
   const ref = useRef<HTMLDivElement>(null);
   const inv = 1 / zoom;
   const picking = live && (tool === "select" || tool === "annotate" || tool === "branch");
@@ -143,7 +144,7 @@ function Slot({ screen, nodeId, live, selected, zoom }: { screen: Screen; nodeId
     e.stopPropagation();
     if (tool === "hand") return;
     if (!live) {
-      selectScreen(screen.id, nodeId, { focus: tool === "lasso" || tool === "annotate" || e.detail > 1 });
+      selectScreen(screen.id, nodeId, { focus: tool === "lasso" || tool === "annotate" || tool === "mask" || e.detail > 1 });
       return;
     }
     // Live: component clicks are handled by ScreenFrame; a click on empty screen area clears picks.
@@ -182,7 +183,7 @@ function Slot({ screen, nodeId, live, selected, zoom }: { screen: Screen; nodeId
   return (
     <>
       <div
-        className={`scr__cap${selected ? " is-selected" : ""}`}
+        className={`scr__cap${selected ? " is-selected" : ""}${finalized ? " is-finalized" : ""}`}
         style={{ transform: `scale(${inv})`, width: THUMB_W * zoom }}
         onClick={(e) => {
           e.stopPropagation();
@@ -193,10 +194,15 @@ function Slot({ screen, nodeId, live, selected, zoom }: { screen: Screen; nodeId
         <IconDevice width={12} height={12} />
         <span>{captionOf(screen) || shown.variant}</span>
         {shown !== screen && <span className="scr__ver">{shown.id.split("@")[1] ?? "v2"}</span>}
+        {finalized && (
+          <span className="scr__final" title="Finalized version">
+            <IconCrown width={10} height={10} /> Final
+          </span>
+        )}
       </div>
       <div
         ref={ref}
-        className={`scr${selected ? " is-selected" : ""}${live ? " is-live nodrag nopan nowheel" : " is-thumb"}`}
+        className={`scr${selected ? " is-selected" : ""}${finalized ? " is-finalized" : ""}${live ? " is-live nodrag nopan nowheel" : " is-thumb"}`}
         style={{ width: THUMB_W, height: THUMB_H }}
         onClick={onClick}
         onPointerMove={onPointerMove}

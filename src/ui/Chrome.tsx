@@ -3,6 +3,7 @@ import { useViewportStore } from "@xyflow/react";
 import type { Tool } from "../canvas/context";
 import {
   IconBranch,
+  IconBrush,
   IconCheck,
   IconComment,
   IconCursor,
@@ -27,8 +28,11 @@ export interface TopBarProps {
   subtitle: string;
   page: Page;
   onPage: (p: Page) => void;
+  onOpenCanvas?: () => void;
+  canvasOn?: boolean;
   playTraffic: boolean;
   onPlayTraffic: (v: boolean) => void;
+  onPlayMode?: () => void;
   onRunTests: () => void;
   onRun: () => void;
   onExport: () => void;
@@ -39,6 +43,9 @@ export interface TopBarProps {
   /** Journeys page only: a quiet provenance badge on the right ("Real Gemini run"). */
   badge?: string;
   badgeTitle?: string;
+  /** Session AI token usage summary shown quietly in the menu. */
+  tokenSummary?: string;
+  onResetTokens?: () => void;
   /** Extra menu items (data source, seeded bug). Shown on the Advanced pages only. */
   menuItems?: { label: string; fn: () => void }[];
 }
@@ -82,15 +89,17 @@ export function TopBar(p: TopBarProps) {
                   {item("Back to journeys", "", () => p.onPage("journeys"))}
                   <hr />
                   {p.page === "flow" && item("Fit whole flow", "⇧1", p.onFit)}
+                  {p.page === "flow" && p.onPlayMode && item("Play walkthrough", "P", p.onPlayMode)}
                   {p.page === "flow" && item("Toggle left panel", "\\", p.onTogglePanel)}
                   {item("Keyboard shortcuts", "?", p.onHelp)}
                   {p.menuItems?.map((m) => <Fragment key={m.label}>{item(m.label, "", m.fn)}</Fragment>)}
                   {item("Clear my annotations", "", p.onClearNotes)}
+                  {p.tokenSummary && p.onResetTokens && item(`AI tokens: ${p.tokenSummary} (reset)`, "", p.onResetTokens)}
                   <hr />
                 </>
               ) : null}
               <div className="menu__label">Advanced</div>
-              {item(p.page === "flow" ? "Flow canvas ✓" : "Flow canvas", "", () => p.onPage("flow"))}
+              {item(p.canvasOn ? "Flow canvas ✓" : "Flow canvas", "", () => (p.onOpenCanvas ? p.onOpenCanvas() : p.onPage("flow")))}
               {item(p.page === "tests" ? "Invariant tests ✓" : "Invariant tests", "", () => p.onPage("tests"))}
             </div>
           )}
@@ -122,28 +131,34 @@ export function TopBar(p: TopBarProps) {
           )
         ) : (
           <>
-        <button
-          className={`switch${p.playTraffic ? " is-on" : ""}`}
-          role="switch"
-          aria-checked={p.playTraffic}
-          onClick={() => p.onPlayTraffic(!p.playTraffic)}
-          title="Animate sessions flowing along each transition (T)"
-        >
-          <span className="switch__track" aria-hidden="true" />
-          <span className="tb-label">Play traffic</span>
-        </button>
-        <button className="btn btn--ghost" onClick={p.onRunTests} title="Re-run every check over the loaded sessions">
-          <IconCheck width={14} height={14} />
-          <span className="tb-label">Run tests</span>
-        </button>
-        <button className="btn btn--ghost" onClick={p.onRun} title="Run a fresh simulation (R)">
-          <IconPlay width={13} height={13} />
-          <span className="tb-label">Run simulation</span>
-        </button>
-        <button className="btn btn--primary" onClick={p.onExport} title="Export failing traces and annotations">
-          <IconDownload width={14} height={14} />
-          <span className="tb-label">Export</span>
-        </button>
+            <button
+              className={`switch${p.playTraffic ? " is-on" : ""}`}
+              role="switch"
+              aria-checked={p.playTraffic}
+              onClick={() => p.onPlayTraffic(!p.playTraffic)}
+              title="Animate sessions flowing along each transition (T)"
+            >
+              <span className="switch__track" aria-hidden="true" />
+              <span className="tb-label">Play traffic</span>
+            </button>
+            {p.page === "flow" && p.onPlayMode && (
+              <button className="btn btn--ghost" onClick={p.onPlayMode} title="Walk through the live flow interactively (P)">
+                <IconPlay width={13} height={13} />
+                <span className="tb-label">Play</span>
+              </button>
+            )}
+            <button className="btn btn--ghost" onClick={p.onRunTests} title="Re-run every check over the loaded sessions">
+              <IconCheck width={14} height={14} />
+              <span className="tb-label">Run tests</span>
+            </button>
+            <button className="btn btn--ghost" onClick={p.onRun} title="Run a fresh simulation (R)">
+              <IconPlay width={13} height={13} />
+              <span className="tb-label">Run simulation</span>
+            </button>
+            <button className="btn btn--primary" onClick={p.onExport} title="Export failing traces and annotations">
+              <IconDownload width={14} height={14} />
+              <span className="tb-label">Export</span>
+            </button>
           </>
         )}
       </div>
@@ -155,7 +170,8 @@ const TOOLS: { id: Tool; label: string; key: string; Icon: typeof IconCursor }[]
   { id: "select", label: "Select", key: "V", Icon: IconCursor },
   { id: "hand", label: "Hand", key: "H", Icon: IconHand },
   { id: "lasso", label: "Lasso components", key: "L", Icon: IconLasso },
-  { id: "annotate", label: "Comment / flag", key: "C", Icon: IconComment },
+  { id: "annotate", label: "Comment / pin", key: "C", Icon: IconComment },
+  { id: "mask", label: "Paint & Speak mask", key: "M", Icon: IconBrush },
   { id: "branch", label: "Branch: what if…", key: "B", Icon: IconBranch },
 ];
 
@@ -208,8 +224,10 @@ const SHORTCUTS: [string, string][] = [
   ["V", "Select"],
   ["H  or hold Space", "Hand / pan"],
   ["L", "Lasso components on the selected screen"],
-  ["C  or A", "Comment / flag: click a component to pin a note"],
+  ["C  or A", "Comment / pin: click a component to pin @Pin-N"],
+  ["M", "Paint & Speak region mask (@Mask-N)"],
   ["B", "Branch from the selected screen"],
+  ["P", "Play interactive flow walkthrough"],
   ["+ / −", "Zoom in / out"],
   ["⇧1", "Fit whole flow"],
   ["⇧2", "Zoom to selection"],
@@ -220,7 +238,7 @@ const SHORTCUTS: [string, string][] = [
   ["Enter", "Open selected screen up close"],
   ["R", "Re-run simulation"],
   ["\\", "Toggle left panel"],
-  ["Esc", "Clear lasso / selection / cancel"],
+  ["Esc", "Clear lasso / mask / selection / cancel"],
   ["?", "This panel"],
 ];
 
@@ -251,7 +269,7 @@ export function HelpOverlay({ onClose }: { onClose: () => void }) {
           ))}
         </dl>
         <p className="muted small">
-          Each column is a step; each phone is a real generated screen. Zoom in on a selected screen to pick components. Scroll to pan, pinch or ⌘/Ctrl-scroll to zoom.
+          Each column is a step; each phone is a real generated screen. Zoom in on a selected screen to pick components, pin notes, or paint masks.
         </p>
       </div>
     </div>

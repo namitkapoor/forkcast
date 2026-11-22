@@ -1,25 +1,26 @@
-import type { EditScreenRequest, EditScreenResponse } from "../../src/lib/api.js";
+import type { EditScreenRequest, EditScreenResponse, TokenUsage } from "../../src/lib/api.js";
 import { A2UI_VERSION, BASIC_CATALOG_ID, type A2uiMessage, type Screen } from "../../src/a2ui/types.js";
 import { catalogPromptSummary, validateMessages } from "../../src/a2ui/validate.js";
-import { callJson, HttpError, TimeoutError } from "./gemini.js";
+import { callJson, CARBON_TIMEOUT_MS, HttpError, isCarbonModel, TimeoutError, type InlineMediaPart } from "./gemini.js";
 import { getAt, getComponents, getDataModel, lintBindings, pinSurfaceId, screenToText } from "./dataModel.js";
-import { getLlmConfig, type ResolvedLlmConfig } from "./models.js";
+import { getLlmConfig, taskConfigs, type ResolvedLlmConfig } from "./models.js";
 
-// Edits an existing A2UI screen from a chat instruction, touching only what the instruction needs.
-// Same shape as screen.ts: primary model with fallback, validate, one repair round, then guardrails.
+// Edits an existing A2UI screen from a chat instruction, @Pin/@Mask feedback, and optional Paint mask PNG.
+// Same shape as screen.ts: task-routed model with fallback, validate, one repair round, then guardrails.
 
 const SYSTEM = () => `You edit one existing screen of a flight-booking flow inside a chat assistant. The screen is an A2UI v0.9 message stream using ONLY the basic catalog below.
 
 ${catalogPromptSummary()}
 
 Editing rules (all required):
-1. Output one JSON object: {"summary": "<one short sentence on what you changed>", "messages": [ ...the FULL revised A2UI message stream... ]}.
+1. Output one JSON object: {"summary": "<one short sentence on what you changed>", "resolvedAnnotationIds": ["<id>", ...], "messages": [ ...the FULL revised A2UI message stream... ]}.
 2. messages = createSurface (catalogId "${BASIC_CATALOG_ID}"), then ONE updateComponents with EVERY component of the revised screen, then ONE updateDataModel with path "/" holding the whole data model. Use the surfaceId you are given. The root component id stays "root".
-3. Change ONLY what the instruction needs. Keep every other component exactly as it was: same id, same type, same props, same order. New components get new descriptive snake_case ids.
-4. If target components are listed, the change is about them; touch components outside that set only when the instruction can't be done otherwise (e.g. adding a sibling row next to a target).
+3. Change ONLY what the instruction and attached @Pin/@Mask annotations need. Keep every other component exactly as it was: same id, same type, same props, same order. New components get new descriptive snake_case ids.
+4. If target components or @Pin/@Mask annotations are listed, focus your edits on those components; touch components outside that set only when the instruction can't be done otherwise (e.g. adding a sibling row next to a target).
 5. Keep the data model stable: same keys, same values, same bindings. NEVER change prices, totals, flight numbers or ids, dates, times, passenger counts or currency unless the instruction explicitly asks to change those values. "Make the total bigger" means visual size, not a larger amount.
 6. Any new dynamic value (a per-traveler price, a count) goes in the data model as a display-ready string derived from existing values (e.g. total / pax, formatted in the same currency) and is bound with {"path": "/..."}. Never hard-code a price in component props.
-7. Visual emphasis tools in the basic catalog: Text variant (h1 > h2 > h3 > h4 > h5 > body > caption), Card grouping, Row/Column alignment, Divider, Icon. At most one Button with variant "primary".`;
+7. Visual emphasis tools in the basic catalog: Text variant (h1 > h2 > h3 > h4 > h5 > body > caption), Card grouping, Row/Column alignment, Divider, Icon. At most one Button with variant "primary".
+8. In "resolvedAnnotationIds", list the exact id of each attached annotation that your edit addressed.`;
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -27,6 +28,7 @@ const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !
 interface ModelEdit {
   summary?: unknown;
   variant?: unknown;
+  resolvedAnnotationIds?: unknown;
   messages?: unknown;
 }
 
@@ -36,6 +38,17 @@ function surfaceIdOf(screen: Screen): string {
     if (isObj(cs) && typeof cs.surfaceId === "string") return cs.surfaceId;
   }
   return screen.id;
+}
+
+function parseDataUrlMedia(dataUrl?: string): InlineMediaPart | undefined {
+  if (!dataUrl || typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) return undefined;
+  const comma = dataUrl.indexOf(",");
+  if (comma < 5) return undefined;
+  const header = dataUrl.slice(5, comma);
+  const mimeType = header.split(";")[0]?.trim() || "image/png";
+  const data = dataUrl.slice(comma + 1).trim();
+  if (!data || data.length > 4_000_000) return undefined;
+  return { mimeType, data };
 }
 
 /** Scalar leaves of a data model as pointer → value. */
@@ -88,13 +101,38 @@ export async function editScreen(req: EditScreenRequest, budgetMs = 55_000): Pro
   if (!screen || !Array.isArray(screen.messages) || !screen.messages.length) throw new HttpError(400, "screen with messages is required");
   const instruction = typeof req.instruction === "string" ? req.instruction.trim() : "";
   if (!instruction) throw new HttpError(400, "instruction is required");
-  const ids = Array.isArray(req.componentIds) ? req.componentIds.filter((x): x is string => typeof x === "string").slice(0, 24) : [];
+
+  const annotations = Array.isArray(req.annotations) ? req.annotations.slice(0, 16) : [];
+  const annCompIds = annotations.flatMap((a) => [
+    ...(a.componentId ? [a.componentId] : []),
+    ...(Array.isArray(a.intersectingIds) ? a.intersectingIds : []),
+  ]);
+  const rawIds = Array.isArray(req.componentIds) ? req.componentIds.filter((x): x is string => typeof x === "string") : [];
+  const ids = [...new Set([...rawIds, ...annCompIds])].slice(0, 24);
+
+  const inlineMedia: InlineMediaPart[] = [];
+  const directMedia = parseDataUrlMedia(req.maskDataUrl);
+  if (directMedia) inlineMedia.push(directMedia);
+  for (const ann of annotations) {
+    if (inlineMedia.length >= 3) break;
+    const m = parseDataUrlMedia(ann.maskDataUrl);
+    if (m) inlineMedia.push(m);
+  }
 
   const t0 = Date.now();
-  const remaining = () => budgetMs - (Date.now() - t0);
+  const useCorePolicy = inlineMedia.length > 0 || annotations.length >= 2;
+  const primaryCfg = getLlmConfig(useCorePolicy ? "editorCore" : "editor");
+  const primaryTask = useCorePolicy ? taskConfigs.editCore : taskConfigs.editSmall;
+  const fallbackCfg = getLlmConfig("generatorFallback");
+  const effectiveBudgetMs =
+    isCarbonModel(primaryCfg.model) || isCarbonModel(fallbackCfg.model)
+      ? Math.max(budgetMs, CARBON_TIMEOUT_MS + 35_000)
+      : budgetMs;
+  const remaining = () => effectiveBudgetMs - (Date.now() - t0);
   const surfaceId = surfaceIdOf(screen);
   const before = screen.messages;
-  const allowValues = ASKS_FOR_VALUES.test(instruction);
+  const combinedInstructionText = [instruction, ...annotations.map((a) => a.text)].join(". ");
+  const allowValues = ASKS_FOR_VALUES.test(combinedInstructionText);
   const comps = new Map(getComponents(before).map((c) => [String(c.id), c]));
   const targets = ids.map((id) => comps.get(id)).filter(Boolean);
 
@@ -105,18 +143,44 @@ export async function editScreen(req: EditScreenRequest, budgetMs = 55_000): Pro
     `Screen as the user sees it:\n${screenToText(before, 80)}`,
     `Current message stream:\n${JSON.stringify(before)}`,
     targets.length
-      ? `Target components (the user lassoed these on the screen):\n${targets.map((c) => JSON.stringify(c)).join("\n")}`
-      : `No components were selected: the instruction applies to the whole screen.`,
+      ? `Target components (selected / lassoed / painted on the screen):\n${targets.map((c) => JSON.stringify(c)).join("\n")}`
+      : `No specific components were lassoed: apply the instruction to the relevant parts of the screen.`,
+    annotations.length
+      ? `Attached @Pin / @Mask feedback to resolve:\n${annotations
+          .map(
+            (a) =>
+              `- id="${a.id}" ${a.token} [${a.kind}]${a.componentId ? ` on component "${a.componentId}"` : ""}${
+                a.intersectingIds?.length ? ` intersecting [${a.intersectingIds.join(", ")}]` : ""
+              }: "${a.text}"`,
+          )
+          .join("\n")}`
+      : "",
+    req.referencedContext ? `Referenced flow context:\n${req.referencedContext.slice(0, 2000)}` : "",
+    inlineMedia.length ? `Note: ${inlineMedia.length} painted region mask image(s) attached showing the highlighted target area.` : "",
     `Instruction: "${instruction}"`,
     `Return the JSON object now.`,
-  ].join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   const attempts: EditScreenResponse["attempts"] = [];
-  const editorCfg = getLlmConfig("editor");
-  const fallbackCfg = getLlmConfig("generatorFallback");
+  let totalUsage: TokenUsage | undefined;
+  const accumulateUsage = (u: TokenUsage) => {
+    if (!totalUsage) {
+      totalUsage = { ...u };
+    } else {
+      totalUsage.promptTokens += u.promptTokens;
+      totalUsage.outputTokens += u.outputTokens;
+      totalUsage.thoughtTokens += u.thoughtTokens;
+      totalUsage.totalTokens += u.totalTokens;
+    }
+  };
+
   let first: { data: ModelEdit; model: string; raw: string; cfg: ResolvedLlmConfig } | undefined;
-  for (const cfg of [editorCfg, fallbackCfg]) {
-    const timeoutMs = Math.min(cfg === editorCfg ? cfg.timeoutMs : remaining() - 2000, remaining() - 2000);
+  const candidates = [primaryCfg, ...(fallbackCfg.model !== primaryCfg.model ? [fallbackCfg] : [])];
+  for (const cfg of candidates) {
+    const modelCap = isCarbonModel(cfg.model) ? CARBON_TIMEOUT_MS : cfg === primaryCfg ? cfg.timeoutMs : remaining() - 2000;
+    const timeoutMs = Math.min(modelCap, remaining() - 2000);
     if (timeoutMs < 4000) break;
     try {
       const r = await callJson<ModelEdit>({
@@ -124,11 +188,14 @@ export async function editScreen(req: EditScreenRequest, budgetMs = 55_000): Pro
         system,
         prompt,
         temperature: cfg.temperature ?? 0.3,
-        thinkingConfig: cfg.thinkingConfig,
+        thinkingLevel: cfg === primaryCfg ? primaryTask.thinkingLevel : undefined,
+        thinkingConfig: cfg === primaryCfg ? undefined : cfg.thinkingConfig,
+        inlineMedia: inlineMedia.length ? inlineMedia : undefined,
         timeoutMs,
         retries: cfg.retries,
       });
       attempts.push({ model: cfg.model, ms: r.ms, ok: true });
+      accumulateUsage(r.usage);
       first = { ...r, cfg };
       break;
     } catch (e) {
@@ -153,11 +220,12 @@ export async function editScreen(req: EditScreenRequest, budgetMs = 55_000): Pro
         system,
         prompt: repairPrompt,
         temperature: first.cfg.repairTemperature ?? 0.2,
-        thinkingConfig: first.cfg.thinkingConfig,
+        thinkingLevel: "LOW",
         timeoutMs: remaining() - 1000,
         retries: 1,
       });
       attempts.push({ model: first.model, ms: r.ms, ok: true });
+      accumulateUsage(r.usage);
       const res2 = check(r.data, surfaceId, before, allowValues);
       if (res2.a2ui.length < res.a2ui.length || (!res2.a2ui.length && res2.other.length <= res.other.length)) {
         out = r.data;
@@ -183,6 +251,11 @@ export async function editScreen(req: EditScreenRequest, budgetMs = 55_000): Pro
     }
   }
 
+  const validAnnIds = new Set(annotations.map((a) => a.id));
+  const resolvedAnnotationIds = Array.isArray(out.resolvedAnnotationIds)
+    ? out.resolvedAnnotationIds.filter((id): id is string => typeof id === "string" && validAnnIds.has(id))
+    : annotations.map((a) => a.id);
+
   const revised: Screen = {
     ...screen,
     messages,
@@ -195,6 +268,8 @@ export async function editScreen(req: EditScreenRequest, budgetMs = 55_000): Pro
     summary: typeof out.summary === "string" && out.summary.trim() ? out.summary.trim().slice(0, 240) : `Applied: ${instruction}`,
     changed: changedComponents(before, messages),
     warnings,
+    resolvedAnnotationIds: resolvedAnnotationIds.length ? resolvedAnnotationIds : annotations.map((a) => a.id),
     attempts,
+    usage: totalUsage,
   };
 }

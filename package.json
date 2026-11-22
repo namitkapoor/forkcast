@@ -14,6 +14,7 @@
     "typecheck:api": "tsc --noEmit -p api",
     "simulate:journeys": "tsx scripts/simulate-journeys.ts",
     "check:journeys": "tsx scripts/journeys-check.ts",
+    "check:studio": "tsx scripts/verify-consolidation.ts",
     "judge:personas": "tsx scripts/judge-personas.ts"
   },
   "dependencies": {

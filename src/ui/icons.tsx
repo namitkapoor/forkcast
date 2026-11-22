@@ -31,6 +31,12 @@ export const IconPin = base(
     <circle cx="12" cy="11" r="2.2" />
   </>,
 );
+export const IconBrush = base(
+  <>
+    <path d="M18.4 3.6a2.1 2.1 0 013 3L12 16l-4 1 1-4 9.4-9.4z" />
+    <path d="M7.5 16.5c-1.8.4-3 1.6-3.5 3.5 2.4.2 4.3-.6 5-2" />
+  </>,
+);
 export const IconBranch = base(
   <>
     <circle cx="6" cy="5" r="2" />
@@ -40,6 +46,7 @@ export const IconBranch = base(
   </>,
 );
 export const IconPlay = base(<path d="M7 5l12 7-12 7z" />);
+export const IconStop = base(<rect x="6.5" y="6.5" width="11" height="11" rx="2" />);
 export const IconDownload = base(<path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14" />);
 export const IconPlus = base(<path d="M12 5v14M5 12h14" />);
 export const IconMinus = base(<path d="M5 12h14" />);
@@ -129,5 +136,29 @@ export const IconMicOff = base(
   <>
     <path d="M9 5a3 3 0 016 0v5.5M15 14a3 3 0 01-6 0v-2" />
     <path d="M5.5 11a6.5 6.5 0 0010.8 4.8M18.5 11a6.4 6.4 0 01-.5 2.5M12 17.5V21M9 21h6M3 3l18 18" />
+  </>,
+);
+export const IconEye = base(
+  <>
+    <path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z" />
+    <circle cx="12" cy="12" r="2.8" />
+  </>,
+);
+export const IconEyeOff = base(
+  <>
+    <path d="M4 4l16 16M9.9 5.3A10.4 10.4 0 0112 5.5c6 0 9.5 6.5 9.5 6.5a15.8 15.8 0 01-3.3 4.1M6.3 6.5C3.9 8.3 2.5 12 2.5 12s3.5 6.5 9.5 6.5c1.5 0 2.9-.4 4.1-1" />
+  </>,
+);
+export const IconCrown = base(<path d="M4 18h16l1.5-10-5.5 4-4-6-4 6-5.5-4z" />);
+export const IconEdit = base(<path d="M16.5 3.5a2.1 2.1 0 013 3L8 18l-4 1 1-4 11.5-11.5z" />);
+export const IconHistory = base(
+  <>
+    <path d="M3 12a9 9 0 102.6-6.4L3 8" />
+    <path d="M3 4v4h4M12 7v5l3 2" />
+  </>,
+);
+export const IconSliders = base(
+  <>
+    <path d="M4 7h9M17 7h3M14 5v4M4 12h3M11 12h9M8 10v4M4 17h11M19 17h1M16 15v4" />
   </>,
 );

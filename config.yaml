@@ -6,7 +6,7 @@
 #
 # Reasoning options (mapped to @google/genai `thinkingConfig`):
 #   enabled:         true | false
-#   thinkingLevel:   MINIMAL | LOW | MEDIUM | HIGH   (recommended for Gemini 3 / 4 models)
+#   thinkingLevel:   MINIMAL | LOW | MEDIUM | HIGH | XHIGH  (XHIGH supported on Hydrogen & Neon)
 #   thinkingBudget:  integer token budget (0 = disabled, -1 = automatic; optional)
 #   includeThoughts: true | false
 
@@ -40,12 +40,46 @@ llm:
     model: gemini-4-hydrogen
     reasoning:
       enabled: true
-      thinkingLevel: MEDIUM
+      thinkingLevel: LOW
       includeThoughts: false
     temperature: 0.3
     repairTemperature: 0.2
     timeoutMs: 34000
     retries: 2
+
+  editorCore:
+    description: "Higher-reasoning multimodal screen editor when @Mask PNGs or multiple @Pins are attached."
+    model: gemini-4-neon
+    reasoning:
+      enabled: true
+      thinkingLevel: MEDIUM
+      includeThoughts: false
+    temperature: 0.3
+    repairTemperature: 0.2
+    timeoutMs: 42000
+    retries: 2
+
+  disambiguate:
+    description: "Fast pre-flight ambiguity & micro-UI disambiguation check (/api/disambiguate)."
+    model: gemini-4-hydrogen
+    reasoning:
+      enabled: true
+      thinkingLevel: LOW
+      includeThoughts: false
+    temperature: 0.2
+    timeoutMs: 12000
+    retries: 1
+
+  uxEval:
+    description: "Default UX Critic model & reasoning effort (/api/critique-screen; overridable in Inspector UI)."
+    model: gemini-4-carbon
+    reasoning:
+      enabled: true
+      thinkingLevel: MEDIUM
+      includeThoughts: false
+    temperature: 0.2
+    timeoutMs: 200000
+    retries: 1
 
   assistant:
     description: "Short Q&A answers about the run, checks, and coverage in the chat panel."
