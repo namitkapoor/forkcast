@@ -2,7 +2,7 @@ import type { CritiquePin, CritiqueScreenRequest, CritiqueScreenResponse, TokenU
 import { isValidCriticModel, normalizeCriticConfig, type CriticEffort } from "../../src/lib/criticModels.js";
 import { callJson, CARBON_TIMEOUT_MS, HttpError, isCarbonModel, type JsonCallResult } from "./gemini.js";
 import { getComponents, screenToText } from "./dataModel.js";
-import { taskConfigs, type ThinkingLevelSetting } from "./models.js";
+import { models, taskConfigs, type ThinkingLevelSetting } from "./models.js";
 
 const SYSTEM = `You are a Principal UX & QA Evaluator for Forkcast, reviewing a generated flight-booking A2UI screen.
 Evaluate the screen across 4 dimensions (0 to 100 each): usability, hierarchy, accessibility, continuity (how well it carries context and satisfies transition contracts).
@@ -65,8 +65,8 @@ export async function critiqueScreen(req: CritiqueScreenRequest): Promise<Critiq
 
   const candidates: { model: string; level: ThinkingLevelSetting; timeoutMs: number }[] = [
     { model: chosen.model, level: chosen.effort, timeoutMs: timeoutForModel(chosen.model) },
-    { model: "gemini-4-neon", level: "LOW", timeoutMs: 25_000 },
-    { model: "gemini-4-hydrogen", level: "LOW", timeoutMs: 20_000 },
+    { model: models.judge, level: "LOW", timeoutMs: timeoutForModel(models.judge) },
+    { model: models.generator, level: "LOW", timeoutMs: 22_000 },
   ];
 
   const seen = new Set<string>();

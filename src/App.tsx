@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import { Canvas } from "./canvas/Canvas";
 import { CanvasContext, type ActiveCritiqueOverlay, type CanvasApi, type Draft, type MaskCommitPayload, type Picks, type Selection, type Tool } from "./canvas/context";
@@ -37,15 +37,17 @@ import {
 import { Properties, RightPanel, type PropertiesProps, type ReplayState } from "./ui/Inspector";
 import { Chat, type ChatMsg, type PendingDisambiguationState } from "./ui/Chat";
 import { Layers } from "./ui/Layers";
-import { CompareModal } from "./ui/CompareModal";
-import { PlayModal } from "./ui/PlayModal";
-import { TestsPage } from "./ui/pages/TestsPage";
-import { JourneysPage } from "./ui/journeys/JourneysPage";
-import { PersonaFlow, drillFromHash, drillHash, type Drill } from "./ui/flows/PersonaFlow";
+import { drillFromHash, drillHash, type Drill } from "./ui/flows/drill";
 import { loadJourneys, suiteStats } from "./ui/journeys/data";
 import { Dock, HelpOverlay, Toolbar, TopBar, Toasts, type Page, type Toast } from "./ui/Chrome";
 import { IconChat, IconHistory, IconLayers, IconPanel } from "./ui/icons";
-import { HistoryPanel } from "./ui/HistoryPanel";
+
+const JourneysPage = lazy(() => import("./ui/journeys/JourneysPage").then((m) => ({ default: m.JourneysPage })));
+const TestsPage = lazy(() => import("./ui/pages/TestsPage").then((m) => ({ default: m.TestsPage })));
+const PersonaFlow = lazy(() => import("./ui/flows/PersonaFlow").then((m) => ({ default: m.PersonaFlow })));
+const CompareModal = lazy(() => import("./ui/CompareModal").then((m) => ({ default: m.CompareModal })));
+const PlayModal = lazy(() => import("./ui/PlayModal").then((m) => ({ default: m.PlayModal })));
+const HistoryPanel = lazy(() => import("./ui/HistoryPanel").then((m) => ({ default: m.HistoryPanel })));
 import {
   ensureCritiqueVersionedPins,
   fetchServerHistory,
@@ -229,11 +231,40 @@ function Shell() {
         if (typeof srv.tokenTotal === "number" && srv.tokenTotal > 0) {
           setTokenTotal((prev) => Math.max(prev, srv.tokenTotal!));
         }
+        if (srv.versions && typeof srv.versions === "object") {
+          setVersions((prev) => {
+            let next = prev;
+            for (const [k, val] of Object.entries(srv.versions!)) {
+              if (!next[k] && val && Array.isArray(val.list) && val.list.length > 0) {
+                next = { ...next, [k]: val };
+              }
+            }
+            return next;
+          });
+        }
+        if (srv.annotations && typeof srv.annotations === "object") {
+          setAnnotations((prev) => {
+            let changedAny = false;
+            const draftMap: Record<string, Annotation[]> = { ...prev };
+            for (const [sid, list] of Object.entries(srv.annotations!)) {
+              if (!Array.isArray(list) || !list.length) continue;
+              const cleaned = list.filter((a) => a.author !== "ai-evaluator");
+              if (!cleaned.length) continue;
+              const merged = mergeAnnotations(draftMap[sid] ?? [], cleaned);
+              if (merged.length !== (draftMap[sid]?.length ?? 0)) {
+                draftMap[sid] = merged;
+                changedAny = true;
+              }
+            }
+            return changedAny ? normalizeAnnotationMap(draftMap) : prev;
+          });
+        }
       }
       serverLoadedRef.current = true;
     });
     return () => {
       live = false;
+      activeAbort.current?.abort();
     };
   }, []);
 
@@ -826,9 +857,14 @@ function Shell() {
       if (!derived) return;
       const fromNode = derived.graph.nodes.find((n) => n.id === screen.nodeId);
       if (!fromNode) return;
+      activeAbort.current?.abort();
+      const ctrl = new AbortController();
+      activeAbort.current = ctrl;
+      const baseId = screen.id.split("@")[0];
       setBranching(true);
+      setBusy({ key: baseId, label: `Branching · “${utterance.slice(0, 32)}”`, startedAt: Date.now() });
       try {
-        const res: BranchResponse = await branchFromScreen({ fromScreen: screen, fromNode, utterance });
+        const res: BranchResponse = await branchFromScreen({ fromScreen: screen, fromNode, utterance }, { signal: ctrl.signal });
         recordUsage(res.usage);
         if (!res?.node?.id || !res.screen?.id) throw new Error("Unexpected response from /api/branch");
         const taken = new Set(derived.graph.nodes.map((n) => n.id));
@@ -853,6 +889,10 @@ function Shell() {
         apiError(e, "Branching");
       } finally {
         setBranching(false);
+        if (activeAbort.current === ctrl) {
+          activeAbort.current = null;
+          setBusy(null);
+        }
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -865,9 +905,13 @@ function Shell() {
       const node = derived.graph.nodes.find((n) => n.id === nodeId);
       if (!node) return;
       const trace = derived.traces.find((t) => t.steps.some((s) => s.node === nodeId));
+      activeAbort.current?.abort();
+      const ctrl = new AbortController();
+      activeAbort.current = ctrl;
       setGenerating(true);
+      setBusy({ key: `node:${nodeId}`, label: `Generating screen · ${node.label}`, startedAt: Date.now() });
       try {
-        const screen = await generateScreen({ nodeId, node, context: trace?.context ?? {} });
+        const screen = await generateScreen({ nodeId, node, context: trace?.context ?? {} }, { signal: ctrl.signal });
         if (!screen?.id) throw new Error("Unexpected response from /api/generate-screen");
         const s: Screen = { ...screen, nodeId, annotations: screen.annotations ?? [] };
         remember();
@@ -878,6 +922,10 @@ function Shell() {
         apiError(e, "Generating");
       } finally {
         setGenerating(false);
+        if (activeAbort.current === ctrl) {
+          activeAbort.current = null;
+          setBusy(null);
+        }
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2176,85 +2224,87 @@ function Shell() {
                   onPick={onPickLayer}
                 />
               ) : leftTab === "history" ? (
-                <HistoryPanel
-                  graph={derived.graph}
-                  screenById={derived.screenById}
-                  chats={chats}
-                  critiques={critiqueHistory}
-                  activeCritiqueId={activeCritiqueId}
-                  events={events}
-                  activeChatKey={chatKey}
-                  onOpenChatThread={(key) => {
-                    if (key === "run") {
-                      clear();
-                    } else if (key.startsWith("node:")) {
-                      focusNode(key.slice(5));
-                    } else if (key.startsWith("edge:")) {
-                      focusEdge(key.slice(5));
-                    } else {
-                      const baseId = key.split("@")[0];
-                      const scr = derived.screenById.get(baseId);
-                      if (scr) selectScreen(scr.id, scr.nodeId, { focus: true });
-                    }
-                    setLeftTab("chat");
-                  }}
-                  onToggleCritiqueOnCanvas={toggleCritiqueOnCanvas}
-                  onEditCritiquePin={editCritiquePin}
-                  onRestoreCritiquePinRevision={restoreCritiquePinRevision}
-                  onMentionInChat={onMentionInChat}
-                  onOpenEvent={(ev) => {
-                    if (ev.critiqueId) {
-                      const found = critiqueHistory.find((c) => c.id === ev.critiqueId);
-                      if (found) {
-                        toggleCritiqueOnCanvas(found);
-                        return;
+                <Suspense fallback={<div className="loading"><span className="spinner" /> Loading history…</div>}>
+                  <HistoryPanel
+                    graph={derived.graph}
+                    screenById={derived.screenById}
+                    chats={chats}
+                    critiques={critiqueHistory}
+                    activeCritiqueId={activeCritiqueId}
+                    events={events}
+                    activeChatKey={chatKey}
+                    onOpenChatThread={(key) => {
+                      if (key === "run") {
+                        clear();
+                      } else if (key.startsWith("node:")) {
+                        focusNode(key.slice(5));
+                      } else if (key.startsWith("edge:")) {
+                        focusEdge(key.slice(5));
+                      } else {
+                        const baseId = key.split("@")[0];
+                        const scr = derived.screenById.get(baseId);
+                        if (scr) selectScreen(scr.id, scr.nodeId, { focus: true });
                       }
-                    }
-                    if (ev.traceId) {
-                      setReplay({ traceId: ev.traceId, step: 0 });
-                    } else if (ev.baseScreenId) {
-                      const scr = derived.screenById.get(ev.baseScreenId);
-                      if (scr) {
-                        if (ev.versionIndex !== undefined) setVersion(scr.id, ev.versionIndex);
-                        selectScreen(scr.id, scr.nodeId, { focus: true });
-                      }
-                      if (ev.chatKey) setLeftTab("chat");
-                    } else if (ev.chatKey) {
-                      if (ev.chatKey === "run") clear();
-                      else if (ev.chatKey.startsWith("node:")) focusNode(ev.chatKey.slice(5));
-                      else if (ev.chatKey.startsWith("edge:")) focusEdge(ev.chatKey.slice(5));
                       setLeftTab("chat");
-                    }
-                  }}
-                  onExportHistory={() => {
-                    const blob = new Blob(
-                      [
-                        JSON.stringify(
-                          {
-                            exportedAt: new Date().toISOString(),
-                            chats,
-                            critiques: critiqueHistory,
-                            events,
-                            annotations,
-                            versions,
-                            branches,
-                            tokenTotal,
-                          },
-                          null,
-                          2,
-                        ),
-                      ],
-                      { type: "application/json" },
-                    );
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = `forkcast-history-${Date.now()}.json`;
-                    a.click();
-                    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-                    toast({ tone: "ok", title: "History exported", body: `${critiqueHistory.length} critiques · ${Object.keys(chats).length} chat threads` });
-                  }}
-                />
+                    }}
+                    onToggleCritiqueOnCanvas={toggleCritiqueOnCanvas}
+                    onEditCritiquePin={editCritiquePin}
+                    onRestoreCritiquePinRevision={restoreCritiquePinRevision}
+                    onMentionInChat={onMentionInChat}
+                    onOpenEvent={(ev) => {
+                      if (ev.critiqueId) {
+                        const found = critiqueHistory.find((c) => c.id === ev.critiqueId);
+                        if (found) {
+                          toggleCritiqueOnCanvas(found);
+                          return;
+                        }
+                      }
+                      if (ev.traceId) {
+                        setReplay({ traceId: ev.traceId, step: 0 });
+                      } else if (ev.baseScreenId) {
+                        const scr = derived.screenById.get(ev.baseScreenId);
+                        if (scr) {
+                          if (ev.versionIndex !== undefined) setVersion(scr.id, ev.versionIndex);
+                          selectScreen(scr.id, scr.nodeId, { focus: true });
+                        }
+                        if (ev.chatKey) setLeftTab("chat");
+                      } else if (ev.chatKey) {
+                        if (ev.chatKey === "run") clear();
+                        else if (ev.chatKey.startsWith("node:")) focusNode(ev.chatKey.slice(5));
+                        else if (ev.chatKey.startsWith("edge:")) focusEdge(ev.chatKey.slice(5));
+                        setLeftTab("chat");
+                      }
+                    }}
+                    onExportHistory={() => {
+                      const blob = new Blob(
+                        [
+                          JSON.stringify(
+                            {
+                              exportedAt: new Date().toISOString(),
+                              chats,
+                              critiques: critiqueHistory,
+                              events,
+                              annotations,
+                              versions,
+                              branches,
+                              tokenTotal,
+                            },
+                            null,
+                            2,
+                          ),
+                        ],
+                        { type: "application/json" },
+                      );
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `forkcast-history-${Date.now()}.json`;
+                      a.click();
+                      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+                      toast({ tone: "ok", title: "History exported", body: `${critiqueHistory.length} critiques · ${Object.keys(chats).length} chat threads` });
+                    }}
+                  />
+                </Suspense>
               ) : leftTab === "props" && propsProps && rightVisible ? (
                 <div className="rpanel__body" style={{ paddingTop: 4 }}>
                   <Properties {...propsProps} />
@@ -2338,19 +2388,21 @@ function Shell() {
 
         {personaView && drill && (
           <main className="page">
-            <PersonaFlow
-              drill={drill}
-              onDrill={openDrill}
-              onCanvas={() => setFlowView("canvas")}
-              onBack={(mode) => {
-                setPageState("tests");
-                try {
-                  window.history.replaceState(null, "", mode === "naive" ? "#tests/generic" : "#tests");
-                } catch {
-                  /* ignore */
-                }
-              }}
-            />
+            <Suspense fallback={<div className="loading"><span className="spinner" /> Loading persona flow…</div>}>
+              <PersonaFlow
+                drill={drill}
+                onDrill={openDrill}
+                onCanvas={() => setFlowView("canvas")}
+                onBack={(mode) => {
+                  setPageState("tests");
+                  try {
+                    window.history.replaceState(null, "", mode === "naive" ? "#tests/generic" : "#tests");
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+              />
+            </Suspense>
           </main>
         )}
 
@@ -2363,71 +2415,79 @@ function Shell() {
 
         {page === "journeys" && (
           <main className="page">
-            <JourneysPage />
+            <Suspense fallback={<div className="loading"><span className="spinner" /> Loading journeys…</div>}>
+              <JourneysPage />
+            </Suspense>
           </main>
         )}
 
         {page === "tests" && derived && (
           <main className="page">
-            <TestsPage
-              graph={derived.graph}
-              traces={derived.traces}
-              invariants={derived.project.invariants}
-              report={derived.report}
-              folded={derived.folded}
-              cov={derived.cov}
-              lastRun={lastRun}
-              onRunTests={runTests}
-              onOpenPersona={(mode, personaId, intent) => openDrill({ mode, personaId, intent })}
-              onOpenEdge={(k) => {
-                setFlowView("canvas");
-                setPage("flow");
-                window.setTimeout(() => focusEdge(k), 0);
-              }}
-              onOpenNode={(id) => {
-                setFlowView("canvas");
-                setPage("flow");
-                window.setTimeout(() => focusNode(id), 0);
-              }}
-              onReplay={(traceId) => {
-                const f = derived.report.failures.find((x) => x.traceId === traceId);
-                setFlowView("canvas");
-                setPage("flow");
-                if (f?.kind === "contract") {
-                  selectEdge(f.where);
-                  window.setTimeout(() => focusNodes(f.where.split("->"), 0.8), 0);
-                } else if (f) selectNode(f.where);
-                setReplay({ traceId, step: Math.max(0, (f?.stepIndex ?? 1) - 1) });
-              }}
-            />
+            <Suspense fallback={<div className="loading"><span className="spinner" /> Loading tests…</div>}>
+              <TestsPage
+                graph={derived.graph}
+                traces={derived.traces}
+                invariants={derived.project.invariants}
+                report={derived.report}
+                folded={derived.folded}
+                cov={derived.cov}
+                lastRun={lastRun}
+                onRunTests={runTests}
+                onOpenPersona={(mode, personaId, intent) => openDrill({ mode, personaId, intent })}
+                onOpenEdge={(k) => {
+                  setFlowView("canvas");
+                  setPage("flow");
+                  window.setTimeout(() => focusEdge(k), 0);
+                }}
+                onOpenNode={(id) => {
+                  setFlowView("canvas");
+                  setPage("flow");
+                  window.setTimeout(() => focusNode(id), 0);
+                }}
+                onReplay={(traceId) => {
+                  const f = derived.report.failures.find((x) => x.traceId === traceId);
+                  setFlowView("canvas");
+                  setPage("flow");
+                  if (f?.kind === "contract") {
+                    selectEdge(f.where);
+                    window.setTimeout(() => focusNodes(f.where.split("->"), 0.8), 0);
+                  } else if (f) selectNode(f.where);
+                  setReplay({ traceId, step: Math.max(0, (f?.stepIndex ?? 1) - 1) });
+                }}
+              />
+            </Suspense>
           </main>
         )}
 
         {compareScreenId && compareVersions && (
-          <CompareModal
-            title={derived?.screenById.get(compareScreenId)?.variant ?? compareScreenId}
-            baseScreenId={compareScreenId}
-            versions={compareVersions.list}
-            activeIndex={compareVersions.active}
-            finalizedIndex={compareVersions.finalized}
-            hiddenIndices={compareVersions.hidden}
-            onSelectIndex={(idx) => setVersion(compareScreenId, idx)}
-            onToggleFinalize={(idx) => toggleFinalizeVersion(compareScreenId, idx)}
-            onToggleHidden={(idx) => toggleHiddenVersion(compareScreenId, idx)}
-            onClose={() => setCompareScreenId(null)}
-          />
+          <Suspense fallback={null}>
+            <CompareModal
+              title={derived?.screenById.get(compareScreenId)?.variant ?? compareScreenId}
+              baseScreenId={compareScreenId}
+              versions={compareVersions.list}
+              activeIndex={compareVersions.active}
+              finalizedIndex={compareVersions.finalized}
+              hiddenIndices={compareVersions.hidden}
+              onSelectIndex={(idx) => setVersion(compareScreenId, idx)}
+              onToggleFinalize={(idx) => toggleFinalizeVersion(compareScreenId, idx)}
+              onToggleHidden={(idx) => toggleHiddenVersion(compareScreenId, idx)}
+              onClose={() => setCompareScreenId(null)}
+            />
+          </Suspense>
         )}
 
         {playOpen && derived && (
-          <PlayModal
-            graph={derived.graph}
-            screensByNode={derived.screensByNode}
-            shown={shown}
-            initialNodeId={selection.kind === "node" ? selection.id : selection.kind === "screen" ? selection.nodeId : undefined}
-            initialScreenId={selection.kind === "screen" ? selection.id : undefined}
-            onSaveTrace={savePlayTrace}
-            onClose={() => setPlayOpen(false)}
-          />
+          <Suspense fallback={null}>
+            <PlayModal
+              graph={derived.graph}
+              screensByNode={derived.screensByNode}
+              shown={shown}
+              initialNodeId={selection.kind === "node" ? selection.id : selection.kind === "screen" ? selection.nodeId : undefined}
+              initialScreenId={selection.kind === "screen" ? selection.id : undefined}
+              onSaveTrace={savePlayTrace}
+              onClose={() => setPlayOpen(false)}
+            />
+          </Suspense>
         )}
 
         <Toasts toasts={toasts} onDismiss={(id) => setToasts((ts) => ts.filter((t) => t.id !== id))} />

@@ -127,7 +127,29 @@ export function buildThinkingConfig(
   };
 }
 
-function findConfigPath(): string {
+const FALLBACK_RAW_CONFIG: RawConfigFile = {
+  llm: {
+    generator: { model: "gemini-4-hydrogen", reasoning: { enabled: true, thinkingLevel: "LOW" }, temperature: 0.8, repairTemperature: 0.3, timeoutMs: 30000, retries: 3 },
+    generatorFallback: { model: "gemini-4-argon", reasoning: { enabled: true, thinkingLevel: "LOW" }, temperature: 0.8, repairTemperature: 0.3, timeoutMs: 45000, retries: 2 },
+    editor: { model: "gemini-4-hydrogen", reasoning: { enabled: true, thinkingLevel: "LOW" }, temperature: 0.3, repairTemperature: 0.2, timeoutMs: 34000, retries: 2 },
+    editorCore: { model: "gemini-4-neon", reasoning: { enabled: true, thinkingLevel: "MEDIUM" }, temperature: 0.3, repairTemperature: 0.2, timeoutMs: 42000, retries: 2 },
+    disambiguate: { model: "gemini-4-hydrogen", reasoning: { enabled: true, thinkingLevel: "LOW" }, temperature: 0.2, timeoutMs: 12000, retries: 1 },
+    uxEval: { model: "gemini-4-carbon", reasoning: { enabled: true, thinkingLevel: "MEDIUM" }, temperature: 0.2, timeoutMs: 200000, retries: 1 },
+    assistant: { model: "gemini-3.5-flash-lite", reasoning: { enabled: true, thinkingLevel: "MINIMAL" }, temperature: 0.3, timeoutMs: 20000, retries: 2 },
+    branchPlanner: { model: "gemini-3.5-flash-lite", reasoning: { enabled: true, thinkingLevel: "LOW" }, temperature: 0.4, timeoutMs: 15000, retries: 2 },
+    simulator: { model: "gemini-3.5-flash-lite", reasoning: { enabled: true, thinkingLevel: "MINIMAL" }, temperature: 0.9, timeoutMs: 20000, retries: 4 },
+    journeyAssistant: { model: "gemini-3.5-flash-lite", reasoning: { enabled: true, thinkingLevel: "LOW" }, temperature: 0.2, timeoutMs: 30000, retries: 6 },
+    pinFill: { model: "gemini-3.5-flash-lite", reasoning: { enabled: true, thinkingLevel: "MINIMAL" }, temperature: 0.4, repairTemperature: 0.2, timeoutMs: 45000, retries: 5 },
+    judge: { model: "gemini-4-neon", reasoning: { enabled: true, thinkingLevel: "HIGH" }, temperature: 0, timeoutMs: 60000, retries: 3 },
+    judgeFallback: { model: "gemini-4-argon", reasoning: { enabled: true, thinkingLevel: "MEDIUM" }, temperature: 0, timeoutMs: 60000, retries: 3 },
+    personaImage: { model: "gemini-3.1-flash-image", reasoning: { enabled: false }, timeoutMs: 60000, retries: 2 },
+    personaImageFallback: { model: "gemini-2.5-flash-image", reasoning: { enabled: false }, timeoutMs: 60000, retries: 2 },
+    transcribe: { model: "gemini-3.5-transcribe", reasoning: { enabled: false }, temperature: 0, timeoutMs: 30000, retries: 2 },
+    transcribeFallback: { model: "gemini-3.5-flash-lite", reasoning: { enabled: true, thinkingLevel: "MINIMAL" }, temperature: 0, timeoutMs: 30000, retries: 2 },
+  },
+};
+
+function findConfigPath(): string | null {
   const explicit = process.env.FORKCAST_CONFIG_PATH?.trim();
   if (explicit && existsSync(explicit)) return path.resolve(explicit);
 
@@ -138,7 +160,7 @@ function findConfigPath(): string {
   for (const c of candidates) {
     if (existsSync(c)) return c;
   }
-  throw new Error(`config.yaml not found (checked: ${candidates.join(", ")})`);
+  return null;
 }
 
 let cachedPath = "";
@@ -147,6 +169,7 @@ let cachedConfig: RawConfigFile | null = null;
 
 function loadRawConfig(): RawConfigFile {
   const file = findConfigPath();
+  if (!file) return FALLBACK_RAW_CONFIG;
   const mtime = statSync(file).mtimeMs;
   if (cachedConfig && cachedPath === file && cachedMtime === mtime) {
     return cachedConfig;
