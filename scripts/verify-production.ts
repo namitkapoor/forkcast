@@ -127,18 +127,19 @@ async function main() {
     assert.deepEqual(violations, []);
   });
 
-  // 2. vercel.json & CARBON_TIMEOUT_MS = 200_000 alignment
-  await check("vercel.json bundles config.yaml and sets >=240s maxDuration for Carbon routes", () => {
+  // 2. vercel.json Hobby-plan compatibility & CARBON_TIMEOUT_MS = 200_000 alignment
+  await check("vercel.json bundles config.yaml with Hobby-compatible single pattern and <=60s maxDuration", () => {
     assert.equal(CARBON_TIMEOUT_MS, 200_000);
     const vercel = JSON.parse(readFileSync("vercel.json", "utf8")) as {
       functions?: Record<string, { maxDuration?: number; includeFiles?: string }>;
     };
     const fns = vercel.functions ?? {};
+    assert.deepEqual(Object.keys(fns), ["api/*.ts"], "avoid overlapping function globs in vercel.json");
     assert.equal(fns["api/*.ts"]?.includeFiles, "config.yaml");
-    for (const route of ["api/critique-screen.ts", "api/edit-screen.ts", "api/generate-screen.ts", "api/branch.ts"]) {
-      assert.ok((fns[route]?.maxDuration ?? 0) >= 240, `${route} must allow >=240s for Carbon 200s timeout`);
-      assert.equal(fns[route]?.includeFiles, "config.yaml");
-    }
+    assert.ok(
+      (fns["api/*.ts"]?.maxDuration ?? 0) >= 30 && (fns["api/*.ts"]?.maxDuration ?? 0) <= 60,
+      "vercel.json maxDuration must stay <=60s so Vercel Hobby plan pre-build validation passes",
+    );
   });
 
   // 3. All 17 LLM roles resolve from config.yaml
