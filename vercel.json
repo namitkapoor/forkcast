@@ -6,22 +6,6 @@
     "api/*.ts": {
       "maxDuration": 60,
       "includeFiles": "config.yaml"
-    },
-    "api/critique-screen.ts": {
-      "maxDuration": 240,
-      "includeFiles": "config.yaml"
-    },
-    "api/edit-screen.ts": {
-      "maxDuration": 240,
-      "includeFiles": "config.yaml"
-    },
-    "api/generate-screen.ts": {
-      "maxDuration": 240,
-      "includeFiles": "config.yaml"
-    },
-    "api/branch.ts": {
-      "maxDuration": 240,
-      "includeFiles": "config.yaml"
     }
   },
   "headers": [

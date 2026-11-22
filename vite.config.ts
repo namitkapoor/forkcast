@@ -1,9 +1,11 @@
 import { existsSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv, type Plugin, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 
+const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const MAX_DEV_BODY_BYTES = 8 * 1024 * 1024;
 
 /**
@@ -85,9 +87,9 @@ export default defineConfig({
   build: {
     rolldownOptions: {
       input: {
-        main: path.resolve(import.meta.dirname, "index.html"),
-        gallery: path.resolve(import.meta.dirname, "gallery.html"),
-        harness: path.resolve(import.meta.dirname, "harness.html"),
+        main: path.resolve(ROOT_DIR, "index.html"),
+        gallery: path.resolve(ROOT_DIR, "gallery.html"),
+        harness: path.resolve(ROOT_DIR, "harness.html"),
       },
       output: {
         codeSplitting: {
