@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import { Canvas } from "./canvas/Canvas";
-import { CanvasContext, type CanvasApi, type Draft, type MaskCommitPayload, type Picks, type Selection, type Tool } from "./canvas/context";
+import { CanvasContext, type ActiveCritiqueOverlay, type CanvasApi, type Draft, type MaskCommitPayload, type Picks, type Selection, type Tool } from "./canvas/context";
 import { LIVE_ZOOM, type SectionFlowNode } from "./canvas/SectionNode";
 import type { NoodleFlowEdge } from "./canvas/NoodleEdge";
 import { layoutGraph, sectionSize, slotOffset, THUMB_H, THUMB_W, visibleScreens, type SectionSize } from "./canvas/geometry";
@@ -46,6 +46,7 @@ import { Dock, HelpOverlay, Toolbar, TopBar, Toasts, type Page, type Toast } fro
 import { IconChat, IconHistory, IconLayers, IconPanel } from "./ui/icons";
 import { HistoryPanel } from "./ui/HistoryPanel";
 import {
+  ensureCritiqueVersionedPins,
   fetchServerHistory,
   loadAllLocalChats,
   loadStoredCritiques,
@@ -123,6 +124,7 @@ function Shell() {
     loadJson<Record<string, UxEvaluationReport>>("forkcast:uxReports", {}),
   );
   const [critiqueHistory, setCritiqueHistory] = useState<CritiqueRecord[]>(() => loadStoredCritiques());
+  const [activeCritiqueId, setActiveCritiqueId] = useState<string | null>(null);
   const [criticConfig, setCriticConfigState] = useState<CriticConfig>(() => {
     const saved = loadJson< Partial<CriticConfig> | null >("forkcast:criticConfig", null);
     return saved ? normalizeCriticConfig(saved.model, saved.effort) : DEFAULT_CRITIC_CONFIG;
@@ -385,7 +387,13 @@ function Shell() {
       for (const id of ids) {
         if (draftMap[id]) continue;
         const s = derived.screenById.get(id);
-        const merged = mergeAnnotations(loadAnnotations(id), s?.annotations ?? []);
+        const rawLoaded = loadAnnotations(id);
+        // Clean out any legacy persistent ai-evaluator pins from localStorage so Critic pins never stay stuck
+        const cleanedLoaded = rawLoaded.filter((a) => a.author !== "ai-evaluator");
+        if (cleanedLoaded.length !== rawLoaded.length) {
+          saveAnnotations(id, cleanedLoaded);
+        }
+        const merged = mergeAnnotations(cleanedLoaded, (s?.annotations ?? []).filter((a) => a.author !== "ai-evaluator"));
         if (merged.length) {
           draftMap[id] = merged;
           changedAny = true;
@@ -584,6 +592,7 @@ function Shell() {
     setReplay(null);
     setPicksState(null);
     setDetachedKeys([]);
+    setActiveCritiqueId(null);
     setSelection({ kind: "node", id });
   }, []);
   const focusNode = useCallback(
@@ -598,6 +607,7 @@ function Shell() {
     setReplay(null);
     setPicksState(null);
     setDetachedKeys([]);
+    setActiveCritiqueId(null);
     setSelection({ kind: "edge", key });
   }, []);
   const focusEdge = useCallback(
@@ -609,20 +619,26 @@ function Shell() {
     [selectEdge, focusNodes],
   );
   const selectScreen = useCallback(
-    (id: string, nodeId: string, opts?: { focus?: boolean }) => {
+    (id: string, nodeId: string, opts?: { focus?: boolean; keepCritiqueId?: string | null }) => {
       setDraft((d) => (d && !d.screenId.startsWith(id) ? null : d));
       setPicksState((p) => (p && p.screenId !== id ? null : p));
       setDetachedKeys([]);
+      if (opts?.keepCritiqueId !== undefined) {
+        setActiveCritiqueId(opts.keepCritiqueId);
+      } else {
+        setActiveCritiqueId((cur) => (selection.kind === "screen" && selection.id === id ? cur : null));
+      }
       setSelection({ kind: "screen", id, nodeId });
       if (opts?.focus) focusScreen(id, nodeId);
     },
-    [focusScreen],
+    [focusScreen, selection],
   );
   const clear = useCallback(() => {
     setDraft(null);
     setPicksState(null);
     setReplay(null);
     setDetachedKeys([]);
+    setActiveCritiqueId(null);
     setSelection(NONE);
   }, []);
 
@@ -876,37 +892,38 @@ function Shell() {
           return next;
         });
 
-        // Anchor AI critique pins onto matching A2UI components on canvas
+        // Build non-persistent, versioned Critic pins stored ONLY inside the CritiqueRecord!
         const verMatch = targetScreen.id.match(/@v(\d+)$/);
         const verIndex = verMatch ? Math.max(0, Number(verMatch[1]) - 1) : 0;
         const phoneEl = document.querySelector(`[data-screen="${CSS.escape(baseId)}"] .fc-phone`);
         const rects = phoneEl ? componentRects(phoneEl) : [];
 
+        // Ensure globally unique @Critic-N handles across all saved critiques
+        const existingCriticMap: Record<string, Annotation[]> = {};
+        critiqueHistory.forEach((c) => {
+          if (c.versionedPins?.length) existingCriticMap[c.id] = c.versionedPins;
+        });
+
+        const versionedPins: Annotation[] = [];
         const createdTokens: string[] = [];
-        if (res.report.pins.length > 0) {
-          remember();
-          let working = { ...latestState.current.annotations };
-          const list = [...(working[targetScreen.id] ?? [])];
-          res.report.pins.forEach((pin, idx) => {
-            const r = pin.componentId ? rects.find((x) => x.id === pin.componentId) : undefined;
-            const x = r ? r.x + r.w / 2 : 0.78;
-            const y = r ? r.y + r.h / 2 : Math.min(0.88, 0.2 + idx * 0.16);
-            const created = createVersionedAnnotation(working, {
-              x,
-              y,
-              text: pin.text,
-              kind: pin.kind,
-              componentId: pin.componentId,
-              author: "ai-evaluator",
-              includeInAiFeedback: true,
-            });
-            createdTokens.push(formatVersionedRef(created));
-            list.push(created);
-            working = { ...working, [targetScreen.id]: list };
+        res.report.pins.forEach((pin, idx) => {
+          const r = pin.componentId ? rects.find((x) => x.id === pin.componentId) : undefined;
+          const x = r ? r.x + r.w / 2 : 0.78;
+          const y = r ? r.y + r.h / 2 : Math.min(0.88, 0.2 + idx * 0.16);
+          const created = createVersionedAnnotation(existingCriticMap, {
+            x,
+            y,
+            text: pin.text,
+            kind: pin.kind,
+            componentId: pin.componentId,
+            author: "ai-evaluator",
+            prefixOverride: "Critic",
+            includeInAiFeedback: true,
           });
-          saveAnnotations(targetScreen.id, list);
-          setAnnotations(working);
-        }
+          versionedPins.push(created);
+          createdTokens.push(formatVersionedRef(created));
+          existingCriticMap[`__new_${idx}`] = [created];
+        });
 
         const critRec: CritiqueRecord = {
           id: uid("crit"),
@@ -918,6 +935,7 @@ function Shell() {
           variant: targetScreen.variant,
           report: res.report,
           pinTokens: createdTokens,
+          versionedPins,
           createdAt: Date.now(),
         };
         setCritiqueHistory((prev) => {
@@ -925,6 +943,12 @@ function Shell() {
           saveStoredCritiques(next);
           return next;
         });
+
+        // Show this critique's ephemeral pins on the freeform canvas immediately (until dismissed)
+        setActiveCritiqueId(critRec.id);
+        if (rf.getZoom() < LIVE_ZOOM) {
+          focusScreen(baseId, targetScreen.nodeId);
+        }
 
         // Also post the full UX Critique report directly into this screen's Chat conversation & Activity Log
         const d = res.report.dimensions;
@@ -941,6 +965,7 @@ function Shell() {
           title: `UX Critique ${res.report.overallScore}/100 · ${node?.label ?? targetScreen.nodeId} (v${verIndex + 1})`,
           detail: res.report.summary,
           chips: createdTokens,
+          critiqueId: critRec.id,
           baseScreenId: baseId,
           versionIndex: verIndex,
           nodeId: targetScreen.nodeId,
@@ -950,7 +975,7 @@ function Shell() {
         toast({
           tone: "ok",
           title: `UX Critique: ${res.report.overallScore}/100`,
-          body: createdTokens.length ? `Saved to Inspector, Chat & History (${createdTokens.join(", ")})` : "Saved to Inspector, Chat & History",
+          body: createdTokens.length ? `Showing ${createdTokens.length} non-persistent Critic pins on canvas (saved to History)` : "Saved to History",
         });
       } catch (e) {
         if ((e as Error)?.name !== "AbortError") {
@@ -970,7 +995,7 @@ function Shell() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [derived, criticConfig, recordUsage, remember, toast],
+    [derived, criticConfig, critiqueHistory, rf, focusScreen, recordUsage, remember, toast],
   );
 
   const rerun = useCallback(() => {
@@ -1048,9 +1073,33 @@ function Shell() {
   const detachedSet = useMemo(() => new Set(detachedKeys), [detachedKeys]);
   const screenAttached = Boolean(selScreen && !detachedSet.has(`screen:${selScreen.id}`));
 
+  const activeCritiqueRecord = useMemo(() => {
+    if (!activeCritiqueId) return null;
+    const found = critiqueHistory.find((c) => c.id === activeCritiqueId);
+    return found ? ensureCritiqueVersionedPins(found) : null;
+  }, [activeCritiqueId, critiqueHistory]);
+
+  const activeCritiqueOverlay = useMemo<ActiveCritiqueOverlay | null>(() => {
+    if (!activeCritiqueRecord) return null;
+    return {
+      critiqueId: activeCritiqueRecord.id,
+      screenId: activeCritiqueRecord.screenId,
+      label: `Critic ${activeCritiqueRecord.report.overallScore}/100`,
+      pins: activeCritiqueRecord.versionedPins ?? [],
+    };
+  }, [activeCritiqueRecord]);
+
+  const activeCritiquePinsForRefs = useMemo(
+    () =>
+      activeCritiqueOverlay
+        ? { screenId: activeCritiqueOverlay.screenId, pins: activeCritiqueOverlay.pins }
+        : null,
+    [activeCritiqueOverlay],
+  );
+
   const catalog = useMemo(
-    () => (derived ? buildReferenceCatalog(derived.graph, allScreensMap, annotations) : []),
-    [derived, allScreensMap, annotations],
+    () => (derived ? buildReferenceCatalog(derived.graph, allScreensMap, annotations, activeCritiquePinsForRefs) : []),
+    [derived, allScreensMap, annotations, activeCritiquePinsForRefs],
   );
 
   const liveResolved = useMemo(
@@ -1061,12 +1110,13 @@ function Shell() {
             graph: derived.graph,
             screensById: allScreensMap,
             annotationsByScreen: annotations,
+            activeCritiquePins: activeCritiquePinsForRefs,
             activeScreenId: selScreen?.id,
             shownScreenId: shownSelScreen?.id,
             detachedKeys: detachedSet,
           })
         : null,
-    [derived, chatDraft, allScreensMap, annotations, selScreen?.id, shownSelScreen?.id, detachedSet],
+    [derived, chatDraft, allScreensMap, annotations, activeCritiquePinsForRefs, selScreen?.id, shownSelScreen?.id, detachedSet],
   );
 
   const onAttachCatalogItem = useCallback((item: CatalogReferenceItem) => {
@@ -1272,6 +1322,7 @@ function Shell() {
 
         setPicksState(null);
         setDetachedKeys([]);
+        setActiveCritiqueId(null);
         setChanged({ versionId: version.id, ids: res.changed });
         const tokLabel = res.usage?.totalTokens ? ` · ${fmtTok(res.usage.totalTokens)} tok` : "";
         pushMsg(key, {
@@ -1403,6 +1454,7 @@ function Shell() {
             graph: derived.graph,
             screensById: allScreensMap,
             annotationsByScreen: annotations,
+            activeCritiquePins: activeCritiquePinsForRefs,
             activeScreenId: selScreen?.id,
             shownScreenId: shownSelScreen?.id,
             detachedKeys: detachedSet,
@@ -1521,7 +1573,7 @@ function Shell() {
     [picks, selScreen, flagAnchor, shown, addAnnotation, pushMsg, toast],
   );
 
-  const setVersion = useCallback((baseId: string, i: number) => {
+  const setVersion = useCallback((baseId: string, i: number, keepCritique = false) => {
     setVersions((v) => {
       const cur = v[baseId] ?? { list: [], active: 0, hidden: [] };
       const next: VersionState = { ...cur, active: Math.max(0, Math.min(i, cur.list.length)) };
@@ -1529,7 +1581,101 @@ function Shell() {
       return { ...v, [baseId]: next };
     });
     setPicksState(null);
+    if (!keepCritique) setActiveCritiqueId(null);
   }, []);
+
+  const toggleCritiqueOnCanvas = useCallback(
+    (rec: CritiqueRecord) => {
+      if (activeCritiqueId === rec.id) {
+        setActiveCritiqueId(null);
+        return;
+      }
+      const d = latest.current;
+      if (!d) return;
+      const scr = d.screenById.get(rec.baseScreenId);
+      if (!scr) return;
+      setPage("flow");
+      setReplay(null);
+      setVersion(scr.id, rec.versionIndex, true);
+      selectScreen(scr.id, scr.nodeId, { focus: true, keepCritiqueId: rec.id });
+    },
+    [activeCritiqueId, setPage, setVersion, selectScreen],
+  );
+
+  const editCritiquePin = useCallback(
+    (critiqueId: string, pinId: string, nextText: string) => {
+      setCritiqueHistory((prev) => {
+        const next = prev.map((c) => {
+          if (c.id !== critiqueId) return c;
+          const ensured = ensureCritiqueVersionedPins(c);
+          const updatedPins = (ensured.versionedPins ?? []).map((p) =>
+            p.id === pinId ? appendAnnotationRevision(p, { text: nextText, author: "designer" }) : p,
+          );
+          return {
+            ...ensured,
+            versionedPins: updatedPins,
+            pinTokens: updatedPins.map((p) => formatVersionedRef(p)),
+          };
+        });
+        saveStoredCritiques(next);
+        return next;
+      });
+      toast({ tone: "ok", title: "Saved new Critic pin revision" });
+    },
+    [toast],
+  );
+
+  const restoreCritiquePinRevision = useCallback(
+    (critiqueId: string, pinId: string, revisionId: string) => {
+      setCritiqueHistory((prev) => {
+        const next = prev.map((c) => {
+          if (c.id !== critiqueId) return c;
+          const ensured = ensureCritiqueVersionedPins(c);
+          const updatedPins = (ensured.versionedPins ?? []).map((p) => {
+            if (p.id !== pinId) return p;
+            const target = p.revisions?.find((r) => r.id === revisionId);
+            if (!target) return p;
+            return appendAnnotationRevision(p, { text: target.text, kind: target.kind, status: target.status, author: "designer" });
+          });
+          return {
+            ...ensured,
+            versionedPins: updatedPins,
+            pinTokens: updatedPins.map((p) => formatVersionedRef(p)),
+          };
+        });
+        saveStoredCritiques(next);
+        return next;
+      });
+      toast({ tone: "ok", title: "Restored Critic pin revision" });
+    },
+    [toast],
+  );
+
+  const resolveCritiquePinsWithAi = useCallback(
+    (baseScreen: Screen, rec: CritiqueRecord) => {
+      const ensured = ensureCritiqueVersionedPins(rec);
+      const pins = ensured.versionedPins ?? [];
+      if (!pins.length) return;
+      setVersion(baseScreen.id, ensured.versionIndex, true);
+      setCollapsed(false);
+      setLeftTab("chat");
+      const editAnns: EditAnnotationContext[] = pins.map((p) => ({
+        id: p.id,
+        token: formatVersionedRef(p),
+        kind: p.kind,
+        text: p.text,
+        componentId: p.componentId,
+      }));
+      const instruction = `Address UX critique findings (${editAnns.map((a) => a.token).join(", ")}): ${editAnns.map((a) => a.text).join("; ")}`;
+      pushMsg(baseScreen.id, {
+        role: "user",
+        text: `Fix critic findings (${editAnns.map((a) => a.token).join(", ")})`,
+        chips: editAnns.map((a) => a.token),
+      });
+      void edit(baseScreen, instruction, { editAnnotations: editAnns });
+    },
+    [setVersion, pushMsg, edit],
+  );
 
   const toggleFinalizeVersion = useCallback(
     (baseId: string, idx: number) => {
@@ -1626,6 +1772,7 @@ function Shell() {
         else if (playOpen) setPlayOpen(false);
         else if (draft) setDraft(null);
         else if (picks) setPicksState(null);
+        else if (activeCritiqueId) setActiveCritiqueId(null);
         else if (replay) setReplay(null);
         else clear();
         return;
@@ -1665,7 +1812,7 @@ function Shell() {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
-  }, [help, compareScreenId, playOpen, draft, picks, replay, page, clear, zoomIn, zoomOut, rf, fit, selection, focusNodes, focusScreen, focusEdge, rerun, derived, focusNode, onToolChange, undo, redo]);
+  }, [help, compareScreenId, playOpen, draft, picks, activeCritiqueId, replay, page, clear, zoomIn, zoomOut, rf, fit, selection, focusNodes, focusScreen, focusEdge, rerun, derived, focusNode, onToolChange, undo, redo]);
 
   // ---- React Flow elements ----
   const nodes = useMemo<SectionFlowNode[]>(() => {
@@ -1734,12 +1881,15 @@ function Shell() {
 
   const onVoiceError = useCallback((msg: string) => toast({ tone: "error", title: "Voice input", body: msg }), [toast]);
 
+  const dismissCritiqueOverlay = useCallback(() => setActiveCritiqueId(null), []);
+
   const api = useMemo<CanvasApi>(
     () => ({
       graph: derived?.graph,
       selection,
       tool: spaceHeld ? "hand" : tool,
       annotations,
+      activeCritiqueOverlay,
       draft,
       picks,
       changed,
@@ -1757,6 +1907,8 @@ function Shell() {
       cancelDraft: () => setDraft(null),
       saveDraft,
       commitMask,
+      onDismissCritiqueOverlay: dismissCritiqueOverlay,
+      onMentionCritiquePin: onMentionInChat,
       onScreenAction,
       onVoiceUsage: recordUsage,
       onVoiceError,
@@ -1767,6 +1919,7 @@ function Shell() {
       tool,
       spaceHeld,
       annotations,
+      activeCritiqueOverlay,
       draft,
       picks,
       changed,
@@ -1779,6 +1932,8 @@ function Shell() {
       setPicks,
       saveDraft,
       commitMask,
+      dismissCritiqueOverlay,
+      onMentionInChat,
       onScreenAction,
       recordUsage,
       onVoiceError,
@@ -1817,6 +1972,7 @@ function Shell() {
         annotations,
         uxReports,
         critiqueHistory,
+        activeCritiqueId,
         criticConfig,
         selection,
         picks,
@@ -1834,6 +1990,10 @@ function Shell() {
         onCompareVersions: (baseId) => setCompareScreenId(baseId),
         onCriticConfigChange: setCriticConfig,
         onCritiqueScreen: runCritique,
+        onToggleCritiqueOnCanvas: toggleCritiqueOnCanvas,
+        onEditCritiquePin: editCritiquePin,
+        onRestoreCritiquePinRevision: restoreCritiquePinRevision,
+        onResolveCritiquePinsWithAi: resolveCritiquePinsWithAi,
         onOpenHistory: () => {
           setCollapsed(false);
           setLeftTab("history");
@@ -1990,6 +2150,7 @@ function Shell() {
                   screenById={derived.screenById}
                   chats={chats}
                   critiques={critiqueHistory}
+                  activeCritiqueId={activeCritiqueId}
                   events={events}
                   activeChatKey={chatKey}
                   onOpenChatThread={(key) => {
@@ -2006,14 +2167,18 @@ function Shell() {
                     }
                     setLeftTab("chat");
                   }}
-                  onOpenCritique={(rec) => {
-                    const scr = derived.screenById.get(rec.baseScreenId);
-                    if (scr) {
-                      setVersion(scr.id, rec.versionIndex);
-                      selectScreen(scr.id, scr.nodeId, { focus: true });
-                    }
-                  }}
+                  onToggleCritiqueOnCanvas={toggleCritiqueOnCanvas}
+                  onEditCritiquePin={editCritiquePin}
+                  onRestoreCritiquePinRevision={restoreCritiquePinRevision}
+                  onMentionInChat={onMentionInChat}
                   onOpenEvent={(ev) => {
+                    if (ev.critiqueId) {
+                      const found = critiqueHistory.find((c) => c.id === ev.critiqueId);
+                      if (found) {
+                        toggleCritiqueOnCanvas(found);
+                        return;
+                      }
+                    }
                     if (ev.traceId) {
                       setReplay({ traceId: ev.traceId, step: 0 });
                     } else if (ev.baseScreenId) {

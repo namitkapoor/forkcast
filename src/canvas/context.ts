@@ -48,11 +48,20 @@ export interface Picks {
   lasso?: Point[];
 }
 
+export interface ActiveCritiqueOverlay {
+  critiqueId: string;
+  /** Exact shown screen id (`s-1` or `s-1@v2`) these critic pins belong to. */
+  screenId: string;
+  label: string;
+  pins: Annotation[];
+}
+
 export interface CanvasApi {
   graph?: FlowGraph;
   selection: Selection;
   tool: Tool;
   annotations: Record<string, Annotation[]>;
+  activeCritiqueOverlay?: ActiveCritiqueOverlay | null;
   draft: Draft | null;
   picks: Picks | null;
   /** Components the last AI edit changed, outlined in green on that version. */
@@ -70,6 +79,8 @@ export interface CanvasApi {
   cancelDraft: () => void;
   saveDraft: (text: string, kind: AnnotationKind, includeInAi?: boolean) => void;
   commitMask: (payload: MaskCommitPayload) => void;
+  onDismissCritiqueOverlay?: () => void;
+  onMentionCritiquePin?: (token: string) => void;
   onScreenAction: (screenId: string, action: ScreenAction) => void;
   onVoiceUsage?: (usage: TokenUsage) => void;
   onVoiceError?: (msg: string) => void;

@@ -147,7 +147,7 @@ export function Chat(p: ChatProps) {
       p.catalog
         .filter(
           (it) =>
-            (it.kind === "pin" || it.kind === "mask") &&
+            (it.kind === "pin" || it.kind === "mask" || it.kind === "critic") &&
             it.isLatestRevision &&
             !it.isResolved &&
             it.annotationId !== undefined &&
@@ -330,7 +330,15 @@ export function Chat(p: ChatProps) {
                 >
                   <div className="mention-item__row">
                     <span className={`mention-item__tok mention-item__tok--${it.kind}`}>
-                      {it.kind === "mask" ? <IconBrush width={11} height={11} /> : it.kind === "pin" ? <IconPin width={11} height={11} /> : <IconStep width={11} height={11} />}
+                      {it.kind === "mask" ? (
+                        <IconBrush width={11} height={11} />
+                      ) : it.kind === "critic" ? (
+                        <IconSpark width={11} height={11} />
+                      ) : it.kind === "pin" ? (
+                        <IconPin width={11} height={11} />
+                      ) : (
+                        <IconStep width={11} height={11} />
+                      )}
                       {it.token}
                     </span>
                     <span className="mention-item__sec">{it.secondaryText}</span>

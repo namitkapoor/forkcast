@@ -1,6 +1,7 @@
 import type { Annotation, Screen } from "../a2ui/types";
 import type { Branches } from "../canvas/model";
 import type { UxEvaluationReport } from "../lib/api";
+import { createVersionedAnnotation, formatVersionedRef, normalizeAnnotation } from "./annotations";
 import type { ChatMsg } from "./Chat";
 import { loadJson, saveJson } from "./persist";
 
@@ -16,8 +17,15 @@ export interface CritiqueRecord {
   nodeLabel: string;
   variant: string;
   report: UxEvaluationReport;
-  /** `@Pin-N:v1` handles dropped onto the screen by this critique. */
+  /** `@Critic-N:vK` handles for this critique's pins. */
   pinTokens: string[];
+  /**
+   * Ephemeral-on-canvas, versioned-in-history Critic pins!
+   * Stored inside the CritiqueRecord (with full `revisions[]` v1, v2...) rather than
+   * cluttering persistent screen `annotations`, and rendered on the freeform canvas
+   * whenever this critique is active or selected from History.
+   */
+  versionedPins?: Annotation[];
   createdAt: number;
 }
 
@@ -28,6 +36,7 @@ export interface HistoryEvent {
   detail?: string;
   chips?: string[];
   chatKey?: string;
+  critiqueId?: string;
   baseScreenId?: string;
   versionIndex?: number;
   nodeId?: string;
@@ -51,8 +60,47 @@ const CRITIQUES_KEY = "forkcast:history:critiques";
 const EVENTS_KEY = "forkcast:history:events";
 const CHAT_INDEX_KEY = "forkcast:history:chatKeys";
 
+/**
+ * Ensures every CritiqueRecord (including records saved before `versionedPins` existed)
+ * has a complete `versionedPins: Annotation[]` array with full `AnnotationRevision[]` history.
+ */
+export function ensureCritiqueVersionedPins(rec: CritiqueRecord): CritiqueRecord {
+  if (Array.isArray(rec.versionedPins) && rec.versionedPins.length > 0) {
+    const normalized = rec.versionedPins.map((p, idx) => normalizeAnnotation(p, idx + 1, "Critic"));
+    return {
+      ...rec,
+      versionedPins: normalized,
+      pinTokens: normalized.map((p) => formatVersionedRef(p)),
+    };
+  }
+
+  const synthesized: Annotation[] = (rec.report?.pins ?? []).map((pin, idx) => {
+    const rawTok = rec.pinTokens?.[idx]?.replace(/^@/, "").replace(/:v?\d+$/i, "");
+    const tag = rawTok && /^Critic-\d+$/i.test(rawTok) ? rawTok : `Critic-${idx + 1}`;
+    return createVersionedAnnotation(
+      {},
+      {
+        x: 0.78,
+        y: Math.min(0.88, 0.18 + idx * 0.18),
+        text: pin.text,
+        kind: pin.kind,
+        componentId: pin.componentId,
+        author: "ai-evaluator",
+        explicitMentionTag: tag,
+        includeInAiFeedback: true,
+      },
+    );
+  });
+
+  return {
+    ...rec,
+    versionedPins: synthesized,
+    pinTokens: synthesized.map((p) => formatVersionedRef(p)),
+  };
+}
+
 export function loadStoredCritiques(): CritiqueRecord[] {
-  return loadJson<CritiqueRecord[]>(CRITIQUES_KEY, []);
+  return loadJson<CritiqueRecord[]>(CRITIQUES_KEY, []).map(ensureCritiqueVersionedPins);
 }
 
 export function saveStoredCritiques(list: CritiqueRecord[]): void {
@@ -67,10 +115,6 @@ export function saveStoredEvents(list: HistoryEvent[]): void {
   saveJson(EVENTS_KEY, list);
 }
 
-/**
- * Discovers every `forkcast:chat:<key>` conversation ever saved in localStorage
- * so past conversations across all screens, steps, transitions, and runs stay visible.
- */
 export function loadAllLocalChats(): Record<string, ChatMsg[]> {
   const out: Record<string, ChatMsg[]> = {};
   try {
@@ -104,7 +148,11 @@ export async function fetchServerHistory(): Promise<StudioHistoryPayload | null>
   try {
     const res = await fetch("/api/history", { method: "GET" });
     if (!res.ok) return null;
-    return (await res.json()) as StudioHistoryPayload;
+    const data = (await res.json()) as StudioHistoryPayload;
+    if (Array.isArray(data.critiques)) {
+      data.critiques = data.critiques.map(ensureCritiqueVersionedPins);
+    }
+    return data;
   } catch {
     return null;
   }

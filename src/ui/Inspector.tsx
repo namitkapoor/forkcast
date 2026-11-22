@@ -15,7 +15,7 @@ import {
   type CriticConfig,
 } from "../lib/criticModels";
 import { formatVersionedRef, normalizeAnnotation } from "./annotations";
-import type { CritiqueRecord } from "./history";
+import { ensureCritiqueVersionedPins, type CritiqueRecord } from "./history";
 import {
   IconAlert,
   IconBranch,
@@ -66,6 +66,7 @@ export interface PropertiesProps {
   annotations: Record<string, Annotation[]>;
   uxReports: Record<string, UxEvaluationReport>;
   critiqueHistory: CritiqueRecord[];
+  activeCritiqueId: string | null;
   criticConfig: CriticConfig;
   selection: Selection;
   picks: Picks | null;
@@ -83,6 +84,10 @@ export interface PropertiesProps {
   onCompareVersions: (baseId: string) => void;
   onCriticConfigChange: (next: CriticConfig) => void;
   onCritiqueScreen: (screen: Screen) => void;
+  onToggleCritiqueOnCanvas: (rec: CritiqueRecord) => void;
+  onEditCritiquePin: (critiqueId: string, pinId: string, nextText: string) => void;
+  onRestoreCritiquePinRevision: (critiqueId: string, pinId: string, revisionId: string) => void;
+  onResolveCritiquePinsWithAi: (baseScreen: Screen, rec: CritiqueRecord) => void;
   onOpenHistory: () => void;
   onReplay: (r: ReplayState | null) => void;
   onFocusNode: (id: string) => void;
@@ -347,18 +352,26 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
   const screenNotes = (p.annotations[shown.id] ?? []).map((a, i) => normalizeAnnotation(a, i + 1));
   const versions = p.versionsOf(screen.id);
   const screenCritiques = useMemo(
-    () => p.critiqueHistory.filter((c) => c.baseScreenId === screen.id).sort((a, b) => b.createdAt - a.createdAt),
+    () =>
+      p.critiqueHistory
+        .filter((c) => c.baseScreenId === screen.id)
+        .map(ensureCritiqueVersionedPins)
+        .sort((a, b) => b.createdAt - a.createdAt),
     [p.critiqueHistory, screen.id],
   );
   const [selectedCritiqueId, setSelectedCritiqueId] = useState<string | null>(null);
   const activeCritique = useMemo(
     () =>
+      (p.activeCritiqueId ? screenCritiques.find((c) => c.id === p.activeCritiqueId) : undefined) ??
       (selectedCritiqueId ? screenCritiques.find((c) => c.id === selectedCritiqueId) : undefined) ??
       screenCritiques.find((c) => c.screenId === shown.id) ??
       screenCritiques[0],
-    [selectedCritiqueId, screenCritiques, shown.id],
+    [p.activeCritiqueId, selectedCritiqueId, screenCritiques, shown.id],
   );
   const uxReport = activeCritique?.report ?? p.uxReports[shown.id];
+  const [editingCriticPinId, setEditingCriticPinId] = useState<string | null>(null);
+  const [editCriticPinText, setEditCriticPinText] = useState("");
+  const [expandedCriticRevPinId, setExpandedCriticRevPinId] = useState<string | null>(null);
 
   const [text, setText] = useState("");
   const textRef = useRef(text);
@@ -528,16 +541,39 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
                     key={c.id}
                     type="button"
                     className={`vchip${activeCritique?.id === c.id ? " is-on" : ""}`}
-                    onClick={() => setSelectedCritiqueId(c.id)}
+                    onClick={() => {
+                      setSelectedCritiqueId(c.id);
+                      if (p.activeCritiqueId !== c.id) p.onToggleCritiqueOnCanvas(c);
+                    }}
                   >
                     #{screenCritiques.length - idx} · v{c.versionIndex + 1} · {c.report.overallScore}
                   </button>
                 ))}
               </div>
             )}
-            <div className="muted small mono" style={{ marginBottom: 6 }}>
-              {uxReport.model}
-              {uxReport.thinkingLevel ? ` · ${uxReport.thinkingLevel.toLowerCase()} effort` : ""}
+            <div className="ann-head" style={{ marginBottom: 6 }}>
+              <span className="muted small mono">
+                {uxReport.model}
+                {uxReport.thinkingLevel ? ` · ${uxReport.thinkingLevel.toLowerCase()} effort` : ""}
+              </span>
+              {activeCritique && (activeCritique.versionedPins?.length ?? 0) > 0 && (
+                <button
+                  type="button"
+                  className={`vchip${p.activeCritiqueId === activeCritique.id ? " is-on" : ""}`}
+                  onClick={() => p.onToggleCritiqueOnCanvas(activeCritique)}
+                  title={p.activeCritiqueId === activeCritique.id ? "Hide ephemeral Critic pins from freeform canvas" : "Show these versioned Critic pins on the freeform canvas"}
+                >
+                  {p.activeCritiqueId === activeCritique.id ? (
+                    <>
+                      <IconEyeOff width={10} height={10} style={{ marginRight: 3, verticalAlign: -1 }} /> Hide pins
+                    </>
+                  ) : (
+                    <>
+                      <IconEye width={10} height={10} style={{ marginRight: 3, verticalAlign: -1 }} /> Show pins ({activeCritique.versionedPins!.length})
+                    </>
+                  )}
+                </button>
+              )}
             </div>
             <div className="ux-dims">
               <div className="ux-dim">
@@ -560,25 +596,106 @@ function ScreenView(p: PropertiesProps & { screen: Screen }) {
             <p className="muted small" style={{ margin: "6px 0 0" }}>
               {uxReport.summary}
             </p>
-            {uxReport.pins.length > 0 && (
-              <ul className="hist-pins" style={{ marginTop: 8 }}>
-                {uxReport.pins.map((pin, idx) => {
-                  const tok = activeCritique?.pinTokens[idx];
-                  return (
-                    <li key={idx}>
-                      {tok ? (
-                        <button type="button" className="note__tok" onClick={() => p.onMentionInChat(tok)}>
-                          {tok}
-                        </button>
-                      ) : (
-                        <code>{pin.kind}</code>
-                      )}
-                      {pin.componentId && <code className="muted">{pin.componentId}</code>}
-                      <span>{pin.text}</span>
-                    </li>
-                  );
-                })}
-              </ul>
+            {activeCritique && (activeCritique.versionedPins?.length ?? 0) > 0 && (
+              <>
+                <ul className="hist-pins" style={{ marginTop: 8 }}>
+                  {activeCritique.versionedPins!.map((cp) => {
+                    const tok = formatVersionedRef(cp);
+                    const isEditingCp = editingCriticPinId === cp.id;
+                    const showCpRevs = expandedCriticRevPinId === cp.id;
+                    const cpRevs = cp.revisions ?? [];
+                    return (
+                      <li key={cp.id} className="hist-pin-item">
+                        <div className="hist-pin-item__top">
+                          <button type="button" className="note__tok" onClick={() => p.onMentionInChat(tok)} title={`Mention ${tok} in Chat`}>
+                            {tok}
+                          </button>
+                          {cp.componentId && <code className="muted">{cp.componentId}</code>}
+                          <div className="note__foot-btns" style={{ marginLeft: "auto" }}>
+                            <button
+                              type="button"
+                              className="note__mini"
+                              onClick={() => {
+                                setEditingCriticPinId(cp.id);
+                                setEditCriticPinText(cp.text);
+                              }}
+                            >
+                              <IconEdit width={10} height={10} /> Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="note__mini"
+                              onClick={() => setExpandedCriticRevPinId(showCpRevs ? null : cp.id)}
+                            >
+                              <IconHistory width={10} height={10} /> v{Math.max(1, cpRevs.length)}
+                            </button>
+                          </div>
+                        </div>
+
+                        {isEditingCp ? (
+                          <div className="note__edit nokeys" style={{ width: "100%", marginTop: 4 }}>
+                            <textarea rows={2} value={editCriticPinText} onChange={(e) => setEditCriticPinText(e.target.value)} />
+                            <div className="row-btns" style={{ justifyContent: "flex-end", marginTop: 4 }}>
+                              <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditingCriticPinId(null)}>
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn--sm btn--accent"
+                                onClick={() => {
+                                  if (editCriticPinText.trim()) p.onEditCritiquePin(activeCritique.id, cp.id, editCriticPinText.trim());
+                                  setEditingCriticPinId(null);
+                                }}
+                              >
+                                Save v{cpRevs.length + 1}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ width: "100%", color: "var(--text)" }}>{cp.text}</div>
+                        )}
+
+                        {showCpRevs && cpRevs.length > 0 && (
+                          <div className="rev-list" style={{ width: "100%" }}>
+                            {[...cpRevs].reverse().map((rev) => {
+                              const rTok = formatVersionedRef(cp, rev.revisionNumber);
+                              return (
+                                <div key={rev.id} className="rev-row">
+                                  <div className="rev-row__head">
+                                    <code className="mono">{rTok}</code>
+                                    <span className="muted">{rev.author}</span>
+                                    <button type="button" className="msg__link" onClick={() => p.onMentionInChat(rTok)}>
+                                      +{rTok}
+                                    </button>
+                                    {rev.revisionNumber < cpRevs.length && (
+                                      <button
+                                        type="button"
+                                        className="msg__link"
+                                        onClick={() => p.onRestoreCritiquePinRevision(activeCritique.id, cp.id, rev.id)}
+                                      >
+                                        <IconUndo width={10} height={10} /> Restore
+                                      </button>
+                                    )}
+                                  </div>
+                                  <div className="rev-row__txt">{rev.text}</div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+                <button
+                  type="button"
+                  className="btn btn--block"
+                  disabled={p.busy}
+                  onClick={() => p.onResolveCritiquePinsWithAi(screen, activeCritique)}
+                >
+                  <IconSpark width={12} height={12} /> Fix {activeCritique.versionedPins!.length} critic pin{activeCritique.versionedPins!.length === 1 ? "" : "s"} with AI
+                </button>
+              </>
             )}
           </>
         )}

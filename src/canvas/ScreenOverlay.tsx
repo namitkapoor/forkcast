@@ -3,7 +3,7 @@ import { useViewportStore } from "@xyflow/react";
 import type { Annotation, AnnotationKind, Screen } from "../a2ui/types";
 import { componentRects, pickInLasso, type ComponentRect, type Point } from "../a2ui/componentRects";
 import { formatVersionedRef } from "../ui/annotations";
-import { IconBrush, IconSpark } from "../ui/icons";
+import { IconBrush, IconSpark, IconX } from "../ui/icons";
 import { useVoiceInput, VoiceMicButton } from "../ui/useVoiceInput";
 import { THUMB_H, THUMB_W } from "./geometry";
 import { useCanvas } from "./context";
@@ -75,9 +75,21 @@ export function ScreenOverlay({
   phone: () => HTMLElement | null;
   zoom: number;
 }) {
-  const { tool, picks, changed, annotations, draft, setPicks, commitMask } = useCanvas();
+  const {
+    tool,
+    picks,
+    changed,
+    annotations,
+    activeCritiqueOverlay,
+    draft,
+    setPicks,
+    commitMask,
+    onDismissCritiqueOverlay,
+    onMentionCritiquePin,
+  } = useCanvas();
   const hover = useHover();
   const [rects, setRects] = useState<ComponentRect[]>([]);
+  const [focusedCriticPinId, setFocusedCriticPinId] = useState<string | null>(null);
   const inv = 1 / zoom;
 
   const measure = useCallback(() => {
@@ -273,11 +285,17 @@ export function ScreenOverlay({
 
   const lasso = path ?? mine?.lasso ?? null;
   const notes = annotations[shown.id] ?? NO_NOTES;
+  const criticOverlayHere = activeCritiqueOverlay?.screenId === shown.id ? activeCritiqueOverlay : null;
+  const criticPins = criticOverlayHere?.pins ?? NO_NOTES;
   const draftHere = draft?.screenId === shown.id ? draft : null;
   const draftBox = draftHere?.componentId ? rects.find((r) => r.id === draftHere.componentId) : undefined;
   const capturing = lassoing || masking;
 
   const activeMaskInfo = strokes.length > 0 ? computeMaskTarget(strokes) : null;
+
+  useEffect(() => {
+    setFocusedCriticPinId(null);
+  }, [criticOverlayHere?.critiqueId, shown.id]);
 
   return (
     <div
@@ -338,17 +356,130 @@ export function ScreenOverlay({
         </div>
       )}
 
+      {/* Ephemeral Critic Overlay Banner & Component Outlines (non-persistent; shown when Critique runs or is opened from History) */}
+      {criticOverlayHere && criticPins.length > 0 && !masking && (
+        <>
+          <div
+            className="critic-banner nodrag nopan"
+            style={{ transform: `translateX(-50%) scale(${inv})` }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <IconSpark width={11} height={11} />
+            <span>{criticOverlayHere.label} · {criticPins.length} pin{criticPins.length === 1 ? "" : "s"}</span>
+            {onDismissCritiqueOverlay && (
+              <button
+                type="button"
+                className="critic-banner__hide"
+                onClick={() => onDismissCritiqueOverlay()}
+                title="Hide ephemeral Critic pins from canvas (Esc)"
+              >
+                Hide <IconX width={10} height={10} />
+              </button>
+            )}
+          </div>
+          {criticPins.map((cp) => {
+            const cr = cp.componentId ? rects.find((r) => r.id === cp.componentId) : undefined;
+            if (!cr) return null;
+            return (
+              <div
+                key={`cbox-${cp.id}`}
+                className={`ov__critic-box${focusedCriticPinId === cp.id ? " is-focused" : ""}`}
+                style={{
+                  left: `${cr.x * 100}%`,
+                  top: `${cr.y * 100}%`,
+                  width: `${cr.w * 100}%`,
+                  height: `${cr.h * 100}%`,
+                }}
+              />
+            );
+          })}
+        </>
+      )}
+
+      {/* Persistent Designer @Pin-N / @Mask-N Annotations */}
       {notes.map((a, i) => {
         const refLabel = formatVersionedRef(a);
         const resolved = a.status === "resolved";
         return (
           <span
             key={a.id}
-            className={`pin pin--${a.kind}${resolved ? " pin--resolved" : ""}${a.author === "ai-evaluator" ? " pin--ai" : ""}`}
+            className={`pin pin--${a.kind}${resolved ? " pin--resolved" : ""}`}
             style={{ left: `${a.x * 100}%`, top: `${a.y * 100}%`, transform: `scale(${inv})` }}
             title={`${refLabel}${a.includeInAiFeedback === false ? " (AI off)" : ""}: ${a.text}`}
           >
             {a.kind === "mask" ? `M${i + 1}` : i + 1}
+          </span>
+        );
+      })}
+
+      {/* Ephemeral Versioned Critic Pins on Freeform Canvas */}
+      {criticPins.map((cp, idx) => {
+        const cr = cp.componentId ? rects.find((r) => r.id === cp.componentId) : undefined;
+        const px = cr ? Math.min(0.94, Math.max(0.06, cr.x + cr.w - 0.04)) : cp.x;
+        const py = cr ? Math.min(0.94, Math.max(0.06, cr.y + 0.06)) : cp.y;
+        const verTok = formatVersionedRef(cp);
+        const isOpenCard = focusedCriticPinId === cp.id;
+        return (
+          <span key={cp.id}>
+            <button
+              type="button"
+              className={`pin pin--critic pin--critic-${cp.kind}${cp.status === "resolved" ? " pin--resolved" : ""}${isOpenCard ? " is-open" : ""} nodrag nopan`}
+              style={{ left: `${px * 100}%`, top: `${py * 100}%`, transform: `scale(${inv})` }}
+              title={`${verTok}${cp.componentId ? ` on ${cp.componentId}` : ""}: ${cp.text}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setFocusedCriticPinId(isOpenCard ? null : cp.id);
+              }}
+            >
+              C{idx + 1}
+            </button>
+            {isOpenCard && (
+              <div
+                className="composer composer--critic nodrag nopan nowheel nokeys"
+                style={{
+                  left: `calc(100% + ${14 * inv}px)`,
+                  top: `${Math.min(0.78, Math.max(0.04, py)) * 100}%`,
+                  transform: `scale(${inv})`,
+                  transformOrigin: "top left",
+                  pointerEvents: "auto",
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="composer__head-critic">
+                  <code>{verTok}</code>
+                  <span className="badge">{cp.kind}</span>
+                  <button
+                    type="button"
+                    className="icon-btn icon-btn--sm"
+                    style={{ marginLeft: "auto" }}
+                    onClick={() => setFocusedCriticPinId(null)}
+                    aria-label="Close critic pin"
+                  >
+                    <IconX width={11} height={11} />
+                  </button>
+                </div>
+                {cp.componentId && (
+                  <div className="composer__target">
+                    on <code>{cp.componentId}</code>
+                  </div>
+                )}
+                <div style={{ fontSize: 12.5, lineHeight: 1.45, color: "var(--text)" }}>{cp.text}</div>
+                {onMentionCritiquePin && (
+                  <div className="composer__actions" style={{ marginTop: 8 }}>
+                    <button
+                      type="button"
+                      className="is-primary"
+                      onClick={() => {
+                        onMentionCritiquePin(verTok);
+                        setFocusedCriticPinId(null);
+                      }}
+                    >
+                      + Mention {verTok} in Chat
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </span>
         );
       })}

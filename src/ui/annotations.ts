@@ -2,14 +2,17 @@ import type { Annotation, AnnotationKind, AnnotationRevision } from "../a2ui/typ
 
 const uid = (p: string) => `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
+export type MentionPrefix = "Pin" | "Mask" | "Critic";
+
 /**
- * Computes a collision-free monotonic mention handle (`Pin-1`, `Pin-2`, `Mask-1`, ...).
+ * Computes a collision-free monotonic mention handle (`Pin-1`, `Mask-1`, `Critic-1`, ...).
  */
 export function nextMentionTag(
   allAnnotations: Record<string, Annotation[]>,
   kind: AnnotationKind,
+  prefixOverride?: MentionPrefix,
 ): string {
-  const prefix = kind === "mask" ? "Mask" : "Pin";
+  const prefix: MentionPrefix = prefixOverride ?? (kind === "mask" ? "Mask" : "Pin");
   const regex = new RegExp(`^${prefix}-(\\d+)$`, "i");
   let maxNum = 0;
 
@@ -56,8 +59,8 @@ export function formatVersionedRef(ann: Pick<Annotation, "mentionTag" | "revisio
 /**
  * Ensures any legacy annotation loaded from storage or run.json has full versioned metadata.
  */
-export function normalizeAnnotation(ann: Annotation, fallbackIndex = 1): Annotation {
-  const prefix = ann.kind === "mask" ? "Mask" : "Pin";
+export function normalizeAnnotation(ann: Annotation, fallbackIndex = 1, defaultPrefix?: MentionPrefix): Annotation {
+  const prefix = defaultPrefix ?? (ann.kind === "mask" ? "Mask" : "Pin");
   const mentionTag = ann.mentionTag || `${prefix}-${fallbackIndex}`;
   const status = ann.status ?? "open";
   const author = ann.author ?? "designer";
@@ -89,13 +92,10 @@ export function normalizeAnnotation(ann: Annotation, fallbackIndex = 1): Annotat
 export function normalizeAnnotationMap(map: Record<string, Annotation[]>): Record<string, Annotation[]> {
   let pinCounter = 0;
   let maskCounter = 0;
-  const usedTags = new Set<string>();
 
-  // First pass: collect existing explicit tags so we never collide
   for (const list of Object.values(map)) {
     for (const a of list) {
       if (a.mentionTag) {
-        usedTags.add(a.mentionTag.toLowerCase());
         const pm = a.mentionTag.match(/^Pin-(\d+)$/i);
         if (pm) pinCounter = Math.max(pinCounter, Number(pm[1]));
         const mm = a.mentionTag.match(/^Mask-(\d+)$/i);
@@ -106,10 +106,11 @@ export function normalizeAnnotationMap(map: Record<string, Annotation[]>): Recor
 
   const out: Record<string, Annotation[]> = {};
   for (const [screenId, list] of Object.entries(map)) {
-    out[screenId] = list.map((a) => {
+    // Strip any legacy persistent `ai-evaluator` pins so Critic pins never stay stuck permanently on screens
+    const designerOnly = list.filter((a) => a.author !== "ai-evaluator");
+    out[screenId] = designerOnly.map((a) => {
       if (a.mentionTag) return normalizeAnnotation(a);
       const tag = a.kind === "mask" ? `Mask-${++maskCounter}` : `Pin-${++pinCounter}`;
-      usedTags.add(tag.toLowerCase());
       return normalizeAnnotation({ ...a, mentionTag: tag });
     });
   }
@@ -125,6 +126,8 @@ export function createVersionedAnnotation(
     kind: AnnotationKind;
     componentId?: string;
     author?: "designer" | "ai-evaluator";
+    prefixOverride?: MentionPrefix;
+    explicitMentionTag?: string;
     includeInAiFeedback?: boolean;
     strokes?: { x: number; y: number }[][];
     maskBox?: { x: number; y: number; w: number; h: number };
@@ -134,7 +137,7 @@ export function createVersionedAnnotation(
 ): Annotation {
   const now = new Date().toISOString();
   const id = uid("an");
-  const mentionTag = nextMentionTag(allAnnotations, init.kind);
+  const mentionTag = init.explicitMentionTag ?? nextMentionTag(allAnnotations, init.kind, init.prefixOverride);
   const author = init.author ?? "designer";
   const includeInAiFeedback = init.includeInAiFeedback ?? true;
   const rev: AnnotationRevision = {

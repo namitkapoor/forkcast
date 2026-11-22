@@ -1,18 +1,24 @@
 import { useMemo, useState } from "react";
 import type { Screen } from "../a2ui/types";
 import type { FlowGraph } from "../graph/types";
+import { formatVersionedRef } from "./annotations";
 import type { ChatMsg } from "./Chat";
-import type { CritiqueRecord, HistoryEvent } from "./history";
+import { ensureCritiqueVersionedPins, type CritiqueRecord, type HistoryEvent } from "./history";
 import {
   IconBranch,
   IconBrush,
   IconChat,
   IconDevice,
   IconDownload,
+  IconEdit,
+  IconEye,
+  IconEyeOff,
+  IconHistory,
   IconPin,
   IconPlay,
   IconSpark,
   IconStep,
+  IconUndo,
 } from "./icons";
 
 export interface HistoryPanelProps {
@@ -20,10 +26,14 @@ export interface HistoryPanelProps {
   screenById: Map<string, Screen>;
   chats: Record<string, ChatMsg[]>;
   critiques: CritiqueRecord[];
+  activeCritiqueId: string | null;
   events: HistoryEvent[];
   activeChatKey: string;
   onOpenChatThread: (chatKey: string) => void;
-  onOpenCritique: (rec: CritiqueRecord) => void;
+  onToggleCritiqueOnCanvas: (rec: CritiqueRecord) => void;
+  onEditCritiquePin: (critiqueId: string, pinId: string, nextText: string) => void;
+  onRestoreCritiquePinRevision: (critiqueId: string, pinId: string, revisionId: string) => void;
+  onMentionInChat: (token: string) => void;
   onOpenEvent: (ev: HistoryEvent) => void;
   onExportHistory: () => void;
 }
@@ -44,6 +54,9 @@ export function HistoryPanel(p: HistoryPanelProps) {
   const [filter, setFilter] = useState<FilterTab>("all");
   const [query, setQuery] = useState("");
   const [expandedChat, setExpandedChat] = useState<string | null>(null);
+  const [editingPinKey, setEditingPinKey] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [expandedRevKey, setExpandedRevKey] = useState<string | null>(null);
 
   const labelOf = useMemo(() => {
     const m = new Map(p.graph.nodes.map((n) => [n.id, n.label]));
@@ -89,14 +102,17 @@ export function HistoryPanel(p: HistoryPanelProps) {
   }, [p.chats, p.screenById, labelOf, q]);
 
   const critiques = useMemo(() => {
-    return [...p.critiques]
+    return p.critiques
+      .map(ensureCritiqueVersionedPins)
       .filter((c) => {
         if (!q) return true;
         return (
           c.nodeLabel.toLowerCase().includes(q) ||
           c.variant.toLowerCase().includes(q) ||
           c.report.summary.toLowerCase().includes(q) ||
-          c.pinTokens.some((tok) => tok.toLowerCase().includes(q))
+          (c.versionedPins ?? []).some(
+            (pin) => pin.text.toLowerCase().includes(q) || formatVersionedRef(pin).toLowerCase().includes(q),
+          )
         );
       })
       .sort((a, b) => b.createdAt - a.createdAt);
@@ -141,7 +157,7 @@ export function HistoryPanel(p: HistoryPanelProps) {
             className="hist__search nokeys"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search chats, critiques, @Pin…"
+            placeholder="Search chats, critiques, @Critic, @Pin…"
             aria-label="Search history"
           />
           <button className="icon-btn icon-btn--sm" onClick={p.onExportHistory} title="Export full history JSON" aria-label="Export history">
@@ -155,67 +171,176 @@ export function HistoryPanel(p: HistoryPanelProps) {
           <div className="chat__empty" style={{ padding: "18px 6px" }}>
             <b>No history recorded yet</b>
             <span>
-              Every Chat conversation across screens and steps, every UX Critique output, and every AI edit, @Pin, @Mask, branch, and walkthrough is automatically saved here and persisted to disk.
+              Every Chat conversation, every UX Critique (with its versioned canvas pins), and every AI edit, @Pin, @Mask, branch, and walkthrough is saved here and persisted to disk.
             </span>
           </div>
         )}
 
-        {/* 1. UX Critique Outputs */}
+        {/* 1. UX Critique Outputs + Ephemeral Canvas Pin Toggle + Versioned Critic Pins */}
         {(filter === "all" || filter === "critiques") && critiques.length > 0 && (
           <section className="hist__sec">
             <div className="hist__sec-title">
               <IconSpark width={12} height={12} /> UX Critique Outputs ({critiques.length})
             </div>
-            {critiques.map((c) => (
-              <div key={c.id} className="hist-card hist-card--critique">
-                <div className="hist-card__head">
-                  <span className="badge badge--accent">{c.report.overallScore}/100</span>
-                  <b className="hist-card__title">
-                    {c.nodeLabel} · v{c.versionIndex + 1}
-                  </b>
-                  <span className="hist-card__time">{formatAgo(c.createdAt)}</span>
-                </div>
-                <div className="muted small mono">
-                  {c.variant} · {c.report.model}
-                  {c.report.thinkingLevel ? ` (${c.report.thinkingLevel.toLowerCase()})` : ""}
-                </div>
-                <div className="ux-dims" style={{ marginTop: 6 }}>
-                  <div className="ux-dim">
-                    <span>Usability</span>
-                    <b>{c.report.dimensions.usability}</b>
+            {critiques.map((c) => {
+              const isShowingOnCanvas = p.activeCritiqueId === c.id;
+              const vPins = c.versionedPins ?? [];
+              return (
+                <div key={c.id} className={`hist-card hist-card--critique${isShowingOnCanvas ? " is-active" : ""}`}>
+                  <div className="hist-card__head">
+                    <span className="badge badge--accent">{c.report.overallScore}/100</span>
+                    <b className="hist-card__title">
+                      {c.nodeLabel} · v{c.versionIndex + 1}
+                    </b>
+                    <span className="hist-card__time">{formatAgo(c.createdAt)}</span>
                   </div>
-                  <div className="ux-dim">
-                    <span>Hierarchy</span>
-                    <b>{c.report.dimensions.hierarchy}</b>
+                  <div className="muted small mono">
+                    {c.variant} · {c.report.model}
+                    {c.report.thinkingLevel ? ` (${c.report.thinkingLevel.toLowerCase()})` : ""}
                   </div>
-                  <div className="ux-dim">
-                    <span>Access.</span>
-                    <b>{c.report.dimensions.accessibility}</b>
+                  <div className="ux-dims" style={{ marginTop: 6 }}>
+                    <div className="ux-dim">
+                      <span>Usability</span>
+                      <b>{c.report.dimensions.usability}</b>
+                    </div>
+                    <div className="ux-dim">
+                      <span>Hierarchy</span>
+                      <b>{c.report.dimensions.hierarchy}</b>
+                    </div>
+                    <div className="ux-dim">
+                      <span>Access.</span>
+                      <b>{c.report.dimensions.accessibility}</b>
+                    </div>
+                    <div className="ux-dim">
+                      <span>Continuity</span>
+                      <b>{c.report.dimensions.continuity}</b>
+                    </div>
                   </div>
-                  <div className="ux-dim">
-                    <span>Continuity</span>
-                    <b>{c.report.dimensions.continuity}</b>
+                  <p className="hist-card__summary">{c.report.summary}</p>
+
+                  {vPins.length > 0 && (
+                    <ul className="hist-pins">
+                      {vPins.map((pin) => {
+                        const tok = formatVersionedRef(pin);
+                        const pinKey = `${c.id}:${pin.id}`;
+                        const isEditing = editingPinKey === pinKey;
+                        const showRevs = expandedRevKey === pinKey;
+                        const revs = pin.revisions ?? [];
+
+                        return (
+                          <li key={pin.id} className="hist-pin-item">
+                            <div className="hist-pin-item__top">
+                              <button
+                                type="button"
+                                className="note__tok"
+                                onClick={() => {
+                                  if (!isShowingOnCanvas) p.onToggleCritiqueOnCanvas(c);
+                                  p.onMentionInChat(tok);
+                                }}
+                                title={`Show on canvas & insert ${tok} in Chat`}
+                              >
+                                {tok}
+                              </button>
+                              {pin.componentId && <code className="muted">{pin.componentId}</code>}
+                              <div className="note__foot-btns" style={{ marginLeft: "auto" }}>
+                                <button
+                                  type="button"
+                                  className="note__mini"
+                                  onClick={() => {
+                                    setEditingPinKey(pinKey);
+                                    setEditDraft(pin.text);
+                                  }}
+                                >
+                                  <IconEdit width={10} height={10} /> Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="note__mini"
+                                  onClick={() => setExpandedRevKey(showRevs ? null : pinKey)}
+                                >
+                                  <IconHistory width={10} height={10} /> v{Math.max(1, revs.length)}
+                                </button>
+                              </div>
+                            </div>
+
+                            {isEditing ? (
+                              <div className="note__edit nokeys" style={{ width: "100%", marginTop: 4 }}>
+                                <textarea rows={2} value={editDraft} onChange={(e) => setEditDraft(e.target.value)} />
+                                <div className="row-btns" style={{ justifyContent: "flex-end", marginTop: 4 }}>
+                                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditingPinKey(null)}>
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn--sm btn--accent"
+                                    onClick={() => {
+                                      if (editDraft.trim()) p.onEditCritiquePin(c.id, pin.id, editDraft.trim());
+                                      setEditingPinKey(null);
+                                    }}
+                                  >
+                                    Save v{revs.length + 1}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div style={{ width: "100%", color: "var(--text)" }}>{pin.text}</div>
+                            )}
+
+                            {showRevs && revs.length > 0 && (
+                              <div className="rev-list" style={{ width: "100%" }}>
+                                {[...revs].reverse().map((rev) => {
+                                  const rTok = formatVersionedRef(pin, rev.revisionNumber);
+                                  return (
+                                    <div key={rev.id} className="rev-row">
+                                      <div className="rev-row__head">
+                                        <code className="mono">{rTok}</code>
+                                        <span className="muted">{rev.author}</span>
+                                        {rev.revisionNumber < revs.length && (
+                                          <button
+                                            type="button"
+                                            className="msg__link"
+                                            onClick={() => p.onRestoreCritiquePinRevision(c.id, pin.id, rev.id)}
+                                          >
+                                            <IconUndo width={10} height={10} /> Restore
+                                          </button>
+                                        )}
+                                      </div>
+                                      <div className="rev-row__txt">{rev.text}</div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+
+                  <div className="hist-card__foot">
+                    <button
+                      className={`btn btn--sm${isShowingOnCanvas ? " btn--accent" : ""}`}
+                      onClick={() => p.onToggleCritiqueOnCanvas(c)}
+                    >
+                      {isShowingOnCanvas ? (
+                        <>
+                          <IconEyeOff width={12} height={12} /> Hide pins on canvas
+                        </>
+                      ) : (
+                        <>
+                          <IconEye width={12} height={12} /> Show {vPins.length} pin{vPins.length === 1 ? "" : "s"} on canvas (v{c.versionIndex + 1})
+                        </>
+                      )}
+                    </button>
+                    {!isShowingOnCanvas && (
+                      <button className="btn btn--sm btn--ghost" onClick={() => p.onToggleCritiqueOnCanvas(c)} title="Jump to screen on freeform canvas">
+                        <IconDevice width={12} height={12} />
+                      </button>
+                    )}
                   </div>
                 </div>
-                <p className="hist-card__summary">{c.report.summary}</p>
-                {c.report.pins.length > 0 && (
-                  <ul className="hist-pins">
-                    {c.report.pins.map((pin, idx) => (
-                      <li key={idx}>
-                        <code>{c.pinTokens[idx] ?? pin.kind}</code>
-                        {pin.componentId && <code className="muted">{pin.componentId}</code>}
-                        <span>{pin.text}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <div className="hist-card__foot">
-                  <button className="btn btn--sm" onClick={() => p.onOpenCritique(c)}>
-                    <IconDevice width={12} height={12} /> Open screen (v{c.versionIndex + 1})
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </section>
         )}
 
@@ -276,7 +401,7 @@ export function HistoryPanel(p: HistoryPanelProps) {
           </section>
         )}
 
-        {/* 3. Full Activity Timeline (Edits, Pins, Masks, Branches, Walkthroughs) */}
+        {/* 3. Full Activity Timeline */}
         {(filter === "all" || filter === "activity") && activities.length > 0 && (
           <section className="hist__sec">
             <div className="hist__sec-title">

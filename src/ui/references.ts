@@ -4,9 +4,9 @@ import type { EditAnnotationContext } from "../lib/api";
 import { formatVersionedRef, getLatestRevision, getRevisionByNumber, normalizeAnnotation } from "./annotations";
 
 export interface CatalogReferenceItem {
-  /** Exact token inserted into prompt, e.g. `@Pin-2:v1`, `@Mask-1:v1`, or `@payment` */
+  /** Exact token inserted into prompt, e.g. `@Pin-2:v1`, `@Mask-1:v1`, `@Critic-1:v1`, or `@payment` */
   token: string;
-  kind: "pin" | "mask" | "step" | "screen";
+  kind: "pin" | "mask" | "critic" | "step" | "screen";
   screenId?: string;
   nodeId?: string;
   annotationId?: string;
@@ -48,6 +48,7 @@ export function buildReferenceCatalog(
   graph: FlowGraph,
   screensById: Map<string, Screen>,
   annotationsByScreen: Record<string, Annotation[]>,
+  activeCritiquePins?: { screenId: string; pins: Annotation[] } | null,
 ): CatalogReferenceItem[] {
   const openItems: CatalogReferenceItem[] = [];
   const resolvedItems: CatalogReferenceItem[] = [];
@@ -64,6 +65,35 @@ export function buildReferenceCatalog(
       secondaryText: `${node.stage} · ${node.component}`,
       sortTime: 1,
     });
+  }
+
+  // Include active ephemeral Critic pins when currently displayed on the canvas
+  if (activeCritiquePins && activeCritiquePins.pins.length > 0) {
+    const baseId = activeCritiquePins.screenId.split("@")[0];
+    const ownerScreen = screensById.get(activeCritiquePins.screenId) ?? screensById.get(baseId);
+    const stepLabel = ownerScreen ? (labelByNode.get(ownerScreen.nodeId) ?? ownerScreen.nodeId) : baseId;
+    for (const rawPin of activeCritiquePins.pins) {
+      const ann = normalizeAnnotation(rawPin, 1, "Critic");
+      const latest = getLatestRevision(ann);
+      const revsDesc = ann.revisions?.length ? [...ann.revisions].reverse() : [latest];
+      for (const rev of revsDesc) {
+        const isLatest = rev.revisionNumber === latest.revisionNumber;
+        openItems.push({
+          token: formatVersionedRef(ann, rev.revisionNumber),
+          kind: "critic",
+          screenId: activeCritiquePins.screenId,
+          nodeId: ownerScreen?.nodeId,
+          annotationId: ann.id,
+          revisionNumber: rev.revisionNumber,
+          isLatestRevision: isLatest,
+          isResolved: ann.status === "resolved",
+          includeInAiFeedback: ann.includeInAiFeedback !== false,
+          primaryText: rev.text,
+          secondaryText: `${stepLabel} · Critic ${isLatest ? `v${rev.revisionNumber} latest` : `v${rev.revisionNumber} history`}`,
+          sortTime: Date.now() + (isLatest ? 1000 : 0),
+        });
+      }
+    }
   }
 
   for (const [screenId, list] of Object.entries(annotationsByScreen)) {
@@ -153,11 +183,12 @@ export function resolvePromptReferences(opts: {
   graph: FlowGraph;
   screensById: Map<string, Screen>;
   annotationsByScreen: Record<string, Annotation[]>;
+  activeCritiquePins?: { screenId: string; pins: Annotation[] } | null;
   activeScreenId?: string;
   shownScreenId?: string;
   detachedKeys?: ReadonlySet<string>;
 }): ResolvedPromptContext {
-  const { prompt, graph, screensById, annotationsByScreen, activeScreenId, shownScreenId, detachedKeys } = opts;
+  const { prompt, graph, screensById, annotationsByScreen, activeCritiquePins, activeScreenId, shownScreenId, detachedKeys } = opts;
   const regex = /@([A-Za-z0-9_-]+)(?::v?(\d+))?/gi;
   const rawTokens: string[] = [];
 
@@ -197,6 +228,26 @@ export function resolvePromptReferences(opts: {
           explicitAnnMap.set(key, {
             token: formatVersionedRef(ann, rev.revisionNumber),
             screenId: sid,
+            annotation: ann,
+            revision: rev,
+            source: "explicit-mention",
+          });
+        }
+      }
+    }
+
+    if (activeCritiquePins) {
+      for (const rawPin of activeCritiquePins.pins) {
+        const ann = normalizeAnnotation(rawPin, 1, "Critic");
+        if (
+          ann.mentionTag &&
+          (ann.mentionTag.toLowerCase() === handle.toLowerCase() || normalizeSearchKey(ann.mentionTag) === normHandle)
+        ) {
+          const rev = getRevisionByNumber(ann, ver);
+          const key = `${ann.id}:v${rev.revisionNumber}`;
+          explicitAnnMap.set(key, {
+            token: formatVersionedRef(ann, rev.revisionNumber),
+            screenId: activeCritiquePins.screenId,
             annotation: ann,
             revision: rev,
             source: "explicit-mention",
@@ -290,9 +341,10 @@ const WORD_NUMS: Record<string, string> = {
 export function normalizeSpokenMentions(text: string, graph?: FlowGraph): string {
   let out = text;
   out = out.replace(
-    /\b(?:at|@)\s*(pin|mask)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)(?:\s*(?:version|ver|v)\s*(\d+|one|two|three|four|five))?\b/gi,
+    /\b(?:at|@)\s*(pin|mask|critic)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)(?:\s*(?:version|ver|v)\s*(\d+|one|two|three|four|five))?\b/gi,
     (_, kindRaw: string, numRaw: string, verRaw?: string) => {
-      const kind = kindRaw.toLowerCase() === "mask" ? "Mask" : "Pin";
+      const kl = kindRaw.toLowerCase();
+      const kind = kl === "mask" ? "Mask" : kl === "critic" ? "Critic" : "Pin";
       const num = WORD_NUMS[numRaw.toLowerCase()] ?? numRaw;
       if (verRaw) {
         const ver = WORD_NUMS[verRaw.toLowerCase()] ?? verRaw;

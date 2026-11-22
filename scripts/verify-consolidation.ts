@@ -17,6 +17,7 @@ import {
 import { flightGraph } from "../src/domains/flights/graph";
 import { fixtureScreens } from "../src/data/fixtures";
 import { CRITIC_MODELS, getCriticModelSpec, normalizeCriticConfig } from "../src/lib/criticModels";
+import { ensureCritiqueVersionedPins, type CritiqueRecord } from "../src/ui/history";
 import { buildThinkingConfig, models, taskConfigs } from "../api/_lib/models.js";
 
 let passed = 0;
@@ -156,6 +157,49 @@ check("Critic model & reasoning effort dropdown combinations stay 100% valid", (
 
   // Invalid values coerce safely
   assert.deepEqual(normalizeCriticConfig("unknown-model", "BOGUS"), { model: "gemini-4-carbon", effort: "MEDIUM" });
+});
+
+check("Critic pins stay non-persistent on screens and retain full @Critic-N:vK versioning in History", () => {
+  // 1. Persistent screen annotation map strips any `ai-evaluator` pins
+  const cleaned = normalizeAnnotationMap({
+    "fx-results-1": [
+      { id: "d1", x: 0.2, y: 0.2, text: "Designer note", kind: "note", author: "designer", createdAt: "2026-01-01T00:00:00Z" },
+      { id: "c1", x: 0.5, y: 0.5, text: "Stale critic pin", kind: "bug", author: "ai-evaluator", createdAt: "2026-01-01T00:00:00Z" },
+    ],
+  });
+  assert.equal(cleaned["fx-results-1"].length, 1);
+  assert.equal(cleaned["fx-results-1"][0].id, "d1");
+
+  // 2. CritiqueRecord synthesizes and versions @Critic-N:v1 -> @Critic-N:v2 pins in History
+  const rawRec: CritiqueRecord = {
+    id: "crit-1",
+    screenId: "fx-results-1",
+    baseScreenId: "fx-results-1",
+    versionIndex: 0,
+    nodeId: "results",
+    nodeLabel: "Results",
+    variant: "stacked-fare-cards",
+    report: {
+      overallScore: 72,
+      dimensions: { usability: 70, hierarchy: 74, accessibility: 75, continuity: 69 },
+      summary: "Missing explicit select button on card.",
+      pins: [{ componentId: "card_1", kind: "bug", text: "Add explicit select CTA" }],
+      model: "gemini-4-carbon",
+      thinkingLevel: "MEDIUM",
+      evaluatedAt: "2026-11-21T00:00:00Z",
+    },
+    pinTokens: [],
+    createdAt: Date.now(),
+  };
+
+  const ensured = ensureCritiqueVersionedPins(rawRec);
+  assert.equal(ensured.versionedPins?.length, 1);
+  assert.equal(formatVersionedRef(ensured.versionedPins![0]), "@Critic-1:v1");
+
+  const editedPin = appendAnnotationRevision(ensured.versionedPins![0], { text: "Add primary Select Fare CTA button" });
+  assert.equal(formatVersionedRef(editedPin), "@Critic-1:v2");
+  assert.equal(getRevisionByNumber(editedPin, 1).text, "Add explicit select CTA");
+  assert.equal(getRevisionByNumber(editedPin, 2).text, "Add primary Select Fare CTA button");
 });
 
 console.log(`\nall ${passed} consolidation checks passed`);
